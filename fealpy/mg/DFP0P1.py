@@ -5,7 +5,7 @@ import scipy.sparse
 from ..fem.integral_alg import IntegralAlg
 from numpy.linalg import norm
 from ..fem import doperator
-from ..mg.DarcyP0P1 import DarcyP0P1
+from ..mg.DarcyFEMP0P1 import DarcyFEMP0P1
 from scipy.sparse.linalg import cg, inv, dsolve,spsolve
 from ..functionspace.lagrange_fem_space import LagrangeFiniteElementSpace
 from ..functionspace.lagrange_fem_space import VectorLagrangeFiniteElementSpace
@@ -30,7 +30,7 @@ class DFP0P1():
         self.cellmeasure = mesh.entity_measure('cell')
         self.integrator1 = integrator1
         self.integrator0 = integrator0
-        self.lfem = DarcyP0P1(self.pde, self.mesh, 1, integrator1)
+        self.lfem = DarcyFEMP0P1(self.pde, self.mesh, integrator0, integrator1)
         self.uh0,self.ph0 = self.lfem.solve()
         self.integralalg1 = IntegralAlg(self.integrator1, self.mesh, self.cellmeasure)
         self.integralalg0 = IntegralAlg(self.integrator0, self.mesh, self.cellmeasure)
@@ -51,9 +51,7 @@ class DFP0P1():
 	    
         bc = np.array([1/3, 1/3, 1/3], dtype=mesh.ftype)
         phi = space0.basis(bc)
-        print('phi',phi)
         gphi = space1.grad_basis(bc)
-        print('gphi',gphi)
 	    
         scaledArea = mu/rho*cellmeasure
 
@@ -72,10 +70,8 @@ class DFP0P1():
         J = np.einsum('ij, k->ikj', cell2dof0, np.ones(ldof1))
 	    
         A21 = csr_matrix((A21.flat, (I.flat, J.flat)), shape=(gdof1, gdof0))
-        A12 = A21.transpose()
-
-        A = bmat([(A11, A12), (A21, None)], format='csr',dtype=np.float)
-        return A
+       
+        return A11, A21
 
     def get_right_vector(self):
         mesh = self.mesh
@@ -88,6 +84,7 @@ class DFP0P1():
         bc = mesh.entity_barycenter('cell')
         ft = self.pde.f(bc)*np.c_[cellmeasure,cellmeasure]
         f = ft.flatten()
+        f2 = self.space0.source_vector(self.pde.f, self.integrator0, cellmeasure)# f == f2
 
         cell2edge = mesh.ds.cell_to_edge()
         ec = mesh.entity_barycenter('edge')
@@ -102,20 +99,19 @@ class DFP0P1():
 
         b = np.bincount(np.ravel(cell),weights=np.r_[bt1,bt2,bt3], minlength=NN)
         ##
-
+        b2 = self.space1.source_vector(self.pde.g, self.integrator1, cellmeasure)
         isBDEdge = mesh.ds.boundary_edge_flag()
         edge2node = mesh.ds.edge_to_node()
         bdEdge = edge[isBDEdge,:]
         d = np.sqrt(np.sum((node[edge2node[isBDEdge,0],:]\
                 - node[edge2node[isBDEdge, 1],:])**2,1))
         mid = ec[isBDEdge, :]
-        data = d*self.pde.Neumann_boundary(mid)/2
-        ii = np.r_[data, data]
+        data = d*self.pde.neumann(mid)/2
+        ii = np.tile(d*self.pde.neumann(mid)/2,(2,1))
 
-        g = np.bincount(np.ravel(bdEdge),\
-                weights=ii.flatten(), minlength=NN)
+        g = np.bincount(np.ravel(bdEdge,'F'),\
+                weights=np.ravel(ii), minlength=NN)
         g = g - b
-
         
         return np.r_[f,g]
 
@@ -127,10 +123,8 @@ class DFP0P1():
         cellmeasure = self.cellmeasure
         NN = mesh.number_of_nodes()
         NC = mesh.number_of_cells()
-        A = self.get_left_matrix()
-        A11 = A[:2*NC,:2*NC]
-        A12 = A[:2*NC,2*NC:]
-        A21 = A[2*NC:,:2*NC]
+        A11, A21 = self.get_left_matrix()
+        A12 = A21.transpose()
         b = self.get_right_vector()
 
         mu = self.pde.mu
@@ -151,7 +145,9 @@ class DFP0P1():
         ##  Knowing (u,p), explicitly compute the intermediate velocity u(n+1/2)
 
         F = self.uh0/alpha - (mu/rho)*self.uh0 - (A12@self.ph0 - b[:2*NC])/area
-        FL = np.sqrt(F[:NC]**2 + F[NC:]**2)
+#        print('m1',(A12@self.ph0))        
+#        print('F3',F)
+        FL = np.sqrt(F[::2]**2 + F[1::2]**2)
         gamma = 1.0/(2*alpha) + np.sqrt((1.0/alpha**2) + 4*(beta/rho)*FL)/2
         uhalf = F/np.repeat(gamma, 2)
         ## Direct Solver 
@@ -160,14 +156,17 @@ class DFP0P1():
 
         while eu+ep > tol and n < maxN:
             ## solve the linear Darcy equation
-            uhalfL = np.sqrt(uhalf[:NC]**2 + uhalf[NC:]**2)
+            #uhalfL = np.sqrt(uhalf[:NC]**2 + uhalf[NC:]**2)
+            uhalfL = np.sqrt(uhalf[::2]**2 + uhalf[1::2]**2)
             fnew = b[:2*NC] + uhalf*area/alpha\
                     - beta/rho*uhalf*np.repeat(uhalfL, 2)*area
 
             ## Direct Solver
             Aalphainv = spdiags(1/Aalpha.data, 0, 2*NC, 2*NC)
             Ap = A21@Aalphainv@A12
+           # print('Ap',Ap.toarray())
             bp = A21@(Aalphainv@fnew) - b[2*NC:]
+           # print('bp', bp)
             p1 = np.zeros(NN,dtype=np.float)
             p1[1:] = spsolve(Ap[1:,1:],bp[1:])
             c = np.sum(np.mean(p1[cell],1)*cellmeasure)/np.sum(cellmeasure)
@@ -177,7 +176,7 @@ class DFP0P1():
             ## Step1:Solve the nonlinear Darcy equation
 
             F = u1/alpha - (mu/rho)*u1 - (A12@p1 - b[:2*NC])/area
-            FL = np.sqrt(F[:NC]**2 + F[NC:]**2)
+            FL = np.sqrt(F[::2]**2 + F[1::2]**2)
             gamma = 1.0/(2*alpha) + np.sqrt((1.0/alpha**2) + 4*(beta/rho)*FL)/2
             uhalf = F/np.repeat(gamma, 2)
 
@@ -185,7 +184,7 @@ class DFP0P1():
             r[0,n] = ru
             r[1,n] = rp
             n = n + 1
-            uLength = np.sqrt(u1[:NC]**2 + u1[NC:]**2)
+            uLength = np.sqrt(u1[::2]**2 + u1[1::2]**2)
             Lu = A11@u1 + (beta/rho)*np.repeat(uLength*cellmeasure, 2)*u1 + A12@p1
             ru = norm(b[:2*NC] - Lu)/norm(b[:2*NC])
             if norm(b[2*NC:]) == 0:

@@ -4,6 +4,7 @@ from fealpy.pde.poisson_model_2d import CrackData, LShapeRSinData, CosCosData, K
 from fealpy.vem import PoissonVEMModel 
 from fealpy.tools.show import showmultirate
 from fealpy.mesh.simple_mesh_generator import triangle
+from fealpy.mesh import Quadtree
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -28,6 +29,9 @@ maxit = 4
 h = 0.2
 box = [0, 1, 0, 1] # [0, 1]^2 domain
 mesh = triangle(box, h, meshtype='polygon')
+# node = np.array([[0,0], [1,0],[1,1],[0,1]], dtype = np.float)
+# cell = np.array([[1,2,0,3]], dtype = np.int)
+# mesh = Quadtree(node, cell)
 
 Ndof = np.zeros((maxit,), dtype=np.int)
 errorType = ['$|| u - \Pi^\\nabla u_h||_0$ with p=1',
