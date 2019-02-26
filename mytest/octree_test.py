@@ -76,5 +76,5 @@ for i in range(8):
     octree.refine(marker)
 
 pmesh = octree.to_pmesh()
-# write_vtk_mesh(pmesh, 'pmesh.vtk')
+write_vtk_mesh(pmesh, 'pmesh.vtk')
 print(pmesh.check())

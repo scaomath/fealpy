@@ -107,7 +107,7 @@ r = 0.5
 phi = lambda p: dcircle(p, cxy, r)
 n = 8 
 mesh = rectangledomainmesh(box, nx=n, ny=n, meshtype='quad')
-qtree = Quadtree(mesh.point, mesh.ds.cell)
+qtree = Quadtree(mesh.node, mesh.ds.cell)
 
 dt = 0.01
 qtdemo = QuadtreeDemo(qtree, dt)

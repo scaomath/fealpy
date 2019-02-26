@@ -21,8 +21,8 @@ def load_vtk_mesh(fileName):
     return pmesh
 
 def write_vtk_mesh(mesh, fileName):
-    node = mesh.entity('node')
-    if point.shape[1] == 2:
+    node = mesh.node
+    if node.shape[1] == 2:
         node = np.concatenate((node, np.zeros((node.shape[0], 1),
             dtype=mesh.ftype)), axis=1)
     ug = tvtk.UnstructuredGrid(points=node)

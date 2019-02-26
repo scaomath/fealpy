@@ -9,6 +9,8 @@ from fealpy.tools.show import showmultirate, show_error_table
 
 d = int(sys.argv[1])
 
+# d = 2
+
 if d == 1:
     from fealpy.pde.poisson_1d import CosData as PDE 
 elif d==2:
@@ -20,6 +22,10 @@ elif d==3:
 p = int(sys.argv[2])
 n = int(sys.argv[3])
 maxit = int(sys.argv[4])
+
+# p = 1
+# n = 2
+# maxit = 10
 
 pde = PDE()
 errorType = ['$|| u - u_h||_0$', '$||\\nabla u - \\nabla u_h||_0$']

@@ -9,7 +9,7 @@ class PolygonMesh(Mesh2d):
 
     """ 2d Polygon Mesh data structure from vtk data structure
     """
-    def __init__(self, node, cell, cellLocation=None):
+    def __init__(self, node, cell, cellLocation=None, dtype = np.float64):
         self.node = node
         if cellLocation is None: 
             if len(cell.shape)  == 2:

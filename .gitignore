@@ -36,3 +36,5 @@ dependcies
 .fealpy.egg-info
 fealpy.egg-info
 dist
+test/oct_tree.vtk
+mytest/oct_tree.vtk
