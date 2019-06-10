@@ -1,4 +1,5 @@
-
+#!/usr/bin/env python3
+# 
 import numpy as np
 import mpl_toolkits.mplot3d as a3
 import matplotlib.colors as colors
@@ -6,7 +7,7 @@ import pylab as pl
 
 import sys
 
-from fealpy.mesh.HexahedronMesh import HexahedronMesh  
+from fealpy.mesh import HexahedronMesh  
 
 from fealpy.mesh.simple_mesh_generator import cubehexmesh 
 
@@ -28,10 +29,18 @@ def hex_mesh():
 cube = [ 0, 1, 0, 1, 0, 1]
 mesh = cubehexmesh(cube, nx = 2, ny = 2, nz = 2)
 
+cell = mesh.entity('cell')
+print(cell)
+
 axes = a3.Axes3D(pl.figure())
 
 cell2edge = mesh.ds.cell_to_edge().flatten()
 cell2face = mesh.ds.cell_to_face().flatten()
+
+print(mesh.number_of_nodes())
+print(mesh.number_of_edges())
+print(mesh.number_of_faces())
+print(mesh.number_of_cells())
 
 mesh.add_plot(axes)
 mesh.find_node(axes, showindex=True, markersize=300, color='r')

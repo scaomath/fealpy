@@ -2,44 +2,49 @@
 import numpy as np
 from ..functionspace.lagrange_fem_space import LagrangeFiniteElementSpace
 from ..quadrature import TriangleQuadrature
+from types import ModuleType
+from .mesh_tools import unique_row, find_node, find_entity, show_mesh_2d
+
 
 class SurfaceTriangleMesh():
     def __init__(self, mesh, surface, p=1):
         """
-        Initial a object of Surface Triangle Mesh. 
+        Initial a object of Surface Triangle Mesh.
 
         Parameters
         ----------
-        self : 
-            Surface Triangle Mesh Object 
-        mesh : 
+        self :
+            Surface Triangle Mesh Object
+        mesh :
             mesh object, represents a triangulation with flat triangle faces.
-        surface : 
+        surface :
             The continuous surface which was represented as a level set
             function.
         p : int
-            The degree of the Lagrange space 
+            The degree of the Lagrange space
 
         Returns
         -------
 
         See Also
         --------
-            
+
         Notes
         -----
-        """ 
+        """
         self.mesh = mesh
         self.p = p
-        self.V = LagrangeFiniteElementSpace(mesh, p)
-        self.node, d = surface.project(self.V.interpolation_points())
+        self.space = LagrangeFiniteElementSpace(mesh, p)
+        self.node, d = surface.project(self.space.interpolation_points())
         self.surface = surface
         self.ds = mesh.ds
         self.ftype = mesh.ftype
         self.itype = mesh.itype
+        self.nodedata = {}
+        self.celldata = {}
 
     def integrator(self, k):
-        return TriangleQuadrature(k) 
+        return TriangleQuadrature(k)
 
     def entity(self, etype=2):
         if etype in ['cell', 2]:
@@ -51,8 +56,15 @@ class SurfaceTriangleMesh():
         else:
             raise ValueError("`entitytype` is wrong!")
 
+    def entity_measure(self, etype=2):
+        p = self.p
+        if etype in ['cell', 2]:
+            return self.area(idx=p+3)
+        else:
+            raise ValueError("`entitytype` is wrong!")
+
     def number_of_nodes(self):
-        return self.node.shape[0] 
+        return self.node.shape[0]
 
     def number_of_edges(self):
         return self.mesh.ds.NE
@@ -68,18 +80,23 @@ class SurfaceTriangleMesh():
 
     def jacobi_matrix(self, bc, cellidx=None):
         mesh = self.mesh
-        cell = mesh.ds.cell
-        cell2dof = self.V.dof.cell2dof
+        cell2dof = self.space.dof.cell2dof
 
-        grad = self.V.grad_basis(bc, cellidx=cellidx)
-        # the tranpose of the jacobi matrix between S_h and K 
-        Jh = mesh.jacobi_matrix(cellidx=cellidx) 
+        grad = self.space.grad_basis(bc, cellidx=cellidx)
+        # the tranpose of the jacobi matrix between S_h and K
+        Jh = mesh.jacobi_matrix(cellidx=cellidx)
 
-        # the tranpose of the jacobi matrix between S_p and S_h 
+        # the tranpose of the jacobi matrix between S_p and S_h
         if cellidx is None:
-            Jph = np.einsum('ijm, ...ijk->...imk', self.node[cell2dof, :], grad)
+            Jph = np.einsum(
+                    'ijm, ...ijk->...imk',
+                    self.node[cell2dof, :],
+                    grad)
         else:
-            Jph = np.einsum('ijm, ...ijk->...imk', self.node[cell2dof[cellidx], :], grad)
+            Jph = np.einsum(
+                    'ijm, ...ijk->...imk',
+                    self.node[cell2dof[cellidx], :],
+                    grad)
 
         # the transpose of the jacobi matrix between S_p and K
         Jp = np.einsum('...ijk, imk->...imj', Jph, Jh)
@@ -87,7 +104,7 @@ class SurfaceTriangleMesh():
         return Jp, grad
 
     def normal(self, bc, cellidx=None):
-        Js, _, ps= self.surface_jacobi_matrix(bc, cellidx=cellidx)
+        Js, _, ps = self.surface_jacobi_matrix(bc, cellidx=cellidx)
         n = np.cross(Js[..., 0, :], Js[..., 1, :], axis=-1)
         return n, ps
 
@@ -98,10 +115,9 @@ class SurfaceTriangleMesh():
         Js = np.einsum('...ijk, ...imk->...imj', Jsp, Jp)
         return Js, grad, ps
 
-
     def bc_to_point(self, bc, cellidx=None):
-        basis = self.V.basis(bc)
-        cell2dof = self.V.dof.cell2dof
+        basis = self.space.basis(bc)
+        cell2dof = self.space.dof.cell2dof
         if cellidx is None:
             bcp = np.einsum('...j, ijk->...ik', basis, self.node[cell2dof, :])
         else:
@@ -109,11 +125,72 @@ class SurfaceTriangleMesh():
         return bcp
 
     def area(self, idx=3):
-        mesh = self.mesh
         integrator = self.integrator(idx)
-        bcs, ws = integrator.quadpts, integrator.weights 
+        bcs, ws = integrator.quadpts, integrator.weights
         Jp, _ = self.jacobi_matrix(bcs)
         n = np.cross(Jp[..., 0, :], Jp[..., 1, :], axis=-1)
         l = np.sqrt(np.sum(n**2, axis=-1))
         a = np.einsum('i, ij->j', ws, l)/2.0
         return a
+
+    def add_plot(
+            self, plot,
+            nodecolor='w', edgecolor='k',
+            cellcolor=[0.5, 0.9, 0.45], aspect='equal',
+            linewidths=1, markersize=50,
+            showaxis=False, showcolorbar=False, cmap='rainbow'):
+
+        if isinstance(plot, ModuleType):
+            fig = plot.figure()
+            fig.set_facecolor('white')
+            axes = fig.gca()
+        else:
+            axes = plot
+        return show_mesh_2d(
+                axes, self.mesh,
+                nodecolor=nodecolor, edgecolor=edgecolor,
+                cellcolor=cellcolor, aspect=aspect,
+                linewidths=linewidths, markersize=markersize,
+                showaxis=showaxis, showcolorbar=showcolorbar, cmap=cmap)
+
+    def find_node(
+            self, axes, node=None,
+            index=None, showindex=False,
+            color='r', markersize=100,
+            fontsize=24, fontcolor='k'):
+
+        if node is None:
+            node = self.node
+
+        if (index is None) and (showindex is True):
+            index = np.array(range(node.shape[0]))
+
+        find_node(
+                axes, node,
+                index=index, showindex=showindex,
+                color=color, markersize=markersize,
+                fontsize=fontsize, fontcolor=fontcolor)
+
+    def find_edge(
+            self, axes,
+            index=None, showindex=False,
+            color='g', markersize=150,
+            fontsize=24, fontcolor='k'):
+
+        find_entity(
+                axes, self.mesh, entity='edge',
+                index=index, showindex=showindex,
+                color=color, markersize=markersize,
+                fontsize=fontsize, fontcolor=fontcolor)
+
+    def find_cell(
+            self, axes,
+            index=None, showindex=False,
+            color='y', markersize=200,
+            fontsize=24, fontcolor='k'):
+
+        find_entity(
+                axes, self.mesh, entity='cell',
+                index=index, showindex=showindex,
+                color=color, markersize=markersize,
+                fontsize=fontsize, fontcolor=fontcolor)

@@ -1,40 +1,31 @@
 import numpy as np
-from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, spdiags, eye
 
 from ..functionspace.lagrange_fem_space import LagrangeFiniteElementSpace
-
 from .integral_alg import IntegralAlg
-from ..recovery import FEMFunctionRecoveryAlg
 
-from ..solver import solve
 from ..boundarycondition import DirichletBC
 
-try:
-    from mumps import spsolve
-except  ImportError:
-    print('Can not import spsolve from mumps!Using spsolve in scipy!')
-    from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import spsolve
 
 from timeit import default_timer as timer
 
 
-
 class PoissonFEMModel(object):
-    def __init__(self, pde, mesh, p, integrator):
-        self.femspace = LagrangeFiniteElementSpace(mesh, p) 
-        self.mesh = self.femspace.mesh
-        self.pde = pde 
-        self.uh = self.femspace.function()
-        self.uI = self.femspace.interpolation(pde.solution)
+    def __init__(self, pde, mesh, p, q=3):
+        self.space = LagrangeFiniteElementSpace(mesh, p)
+        self.mesh = self.space.mesh
+        self.pde = pde
+        self.uh = self.space.function()
+        self.uI = self.space.interpolation(pde.solution)
         self.cellmeasure = mesh.entity_measure('cell')
-        self.integrator = integrator 
-        self.integralalg = IntegralAlg(self.integrator, self.mesh, self.cellmeasure)
+        self.integrator = mesh.integrator(q)
+        self.integralalg = IntegralAlg(
+                self.integrator, self.mesh, self.cellmeasure)
 
-    def recover_estimate(self,rguh):
-        if self.femspace.p > 1:
+    def recover_estimate(self, rguh):
+        if self.space.p > 1:
             raise ValueError('This method only work for p=1!')
-        
-        qf = self.integrator  
+        qf = self.integrator
         bcs, ws = qf.quadpts, qf.weights
 
         val0 = rguh.value(bcs)
@@ -43,16 +34,59 @@ class PoissonFEMModel(object):
         e = np.einsum('i, ij->j', ws, l)
         e *= self.cellmeasure
         return np.sqrt(e)
-    
+
+    def residual_estimate(self, uh=None):
+        if uh is None:
+            uh = self.uh
+        mesh = self.mesh
+        GD = mesh.geo_dimension()
+        NC = mesh.number_of_cells()
+
+        n = mesh.face_normal()
+        bc = np.array([1/(GD+1)]*(GD+1), dtype=mesh.ftype)
+        grad = uh.grad_value(bc)
+
+        ps = mesh.bc_to_point(bc)
+        try:
+            d = self.pde.diffusion_coefficient(ps)
+        except AttributeError:
+            d = np.ones(NC, dtype=mesh.ftype)
+
+        if isinstance(d, float):
+            grad *= d
+        elif len(d) == GD:
+            grad = np.einsum('m, im->im', d, grad)
+        elif isinstance(d, np.ndarray):
+            if len(d.shape) == 1:
+                grad = np.einsum('i, im->im', d, grad)
+            elif len(d.shape) == 2:
+                grad = np.einsum('im, im->im', d, grad)
+            elif len(d.shape) == 3:
+                grad = np.einsum('imn, in->in', d, grad)
+
+        if GD == 2:
+            face2cell = mesh.ds.edge_to_cell()
+            h = np.sqrt(np.sum(n**2, axis=-1))
+        elif GD == 3:
+            face2cell = mesh.ds.face_to_cell()
+            h = np.sum(n**2, axis=-1)**(1/4)
+
+        J = h*np.sum((grad[face2cell[:, 0]] - grad[face2cell[:, 1]])*n, axis=-1)**2
+
+        NC = mesh.number_of_cells()
+        eta = np.zeros(NC, dtype=mesh.ftype)
+        np.add.at(eta, face2cell[:, 0], J)
+        np.add.at(eta, face2cell[:, 1], J)
+        return np.sqrt(eta)
 
     def get_left_matrix(self):
-        return self.femspace.stiff_matrix(self.integrator, self.cellmeasure)
+        return self.space.stiff_matrix(self.integrator, self.cellmeasure)
 
     def get_right_vector(self):
-        return self.femspace.source_vector(self.pde.source, self.integrator, self.cellmeasure)
+        return self.space.source_vector(self.pde.source, self.integrator, self.cellmeasure)
 
     def solve(self):
-        bc = DirichletBC(self.femspace, self.pde.dirichlet)
+        bc = DirichletBC(self.space, self.pde.dirichlet)
 
         start = timer()
         A = self.get_left_matrix()
@@ -68,16 +102,15 @@ class PoissonFEMModel(object):
         end = timer()
         print("Solve time:", end-start)
 
-        ls = {'A':AD, 'b':b, 'solution':self.uh[:]}
+        ls = {'A': AD, 'b': b, 'solution': self.uh.copy()}
 
-        return ls # return the linear system
+        return ls  # return the linear system
 
-    
-    def get_l2_error(self):
+    def l2_error(self):
         e = self.uh - self.uI
         return np.sqrt(np.mean(e**2))
 
-    def get_L2_error(self, uh=None):
+    def L2_error(self, uh=None):
         u = self.pde.solution
         if uh is None:
             uh = self.uh.value
@@ -86,7 +119,7 @@ class PoissonFEMModel(object):
         L2 = self.integralalg.L2_error(u, uh)
         return L2
 
-    def get_H1_error(self, uh=None):
+    def H1_semi_error(self, uh=None):
         gu = self.pde.gradient
         if uh is None:
             guh = self.uh.grad_value
@@ -95,9 +128,9 @@ class PoissonFEMModel(object):
         H1 = self.integralalg.L2_error(gu, guh)
         return H1
 
-    def get_recover_error(self,rguh):
+    def recover_error(self, rguh):
         gu = self.pde.gradient
         guh = rguh.value
         mesh = self.mesh
-        re = self.integralalg.L2_error(gu, guh, mesh)  
+        re = self.integralalg.L2_error(gu, guh, mesh)
         return re

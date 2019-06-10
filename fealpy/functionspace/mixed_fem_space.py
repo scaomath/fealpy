@@ -424,9 +424,9 @@ class HuZhangFiniteElementSpace():
                 TF = np.einsum('ijk, kmn->ijmn', self.TF[cell2face[:, i]], self.T)
                 uI[cell2dof[:, isDof, :]] = np.einsum('ikmn, ijmn->ikj', val[..., isDof, :, :], TF) 
         return uI
-
-    def function(self, dim=None):
-        f = Function(self)
+        
+        def function(self, dim=None):
+            f = Function(self)
         return f
 
     def array(self, dim=None):
@@ -505,13 +505,13 @@ class RTFiniteElementSpace2d:
 
         ldof = self.number_of_local_dofs()
         NC = mesh.number_of_cells()
-        divPhi = np.zeors((NC, ldof), dtype=np.float)
+        divPhi = np.zeros((NC, ldof), dtype=np.float)
         cell2edgeSign = self.cell_to_edge_sign()
         W = np.array([[0, 1], [-1, 0]], dtype=np.float)
 
         Rlambda = mesh.rot_lambda()
         Dlambda = Rlambda@W
-        if p == 1:
+        if p == 0:
             divPhi[:, 0] = np.sum(Dlambda[:, 1, :]*Rlambda[:, 2, :], axis=1) - np.sum(Dlambda[:, 2, :]*Rlambda[:, 1, :], axis=1)
             divPhi[:, 1] = np.sum(Dlambda[:, 2, :]*Rlambda[:, 0, :], axis=1) - np.sum(Dlambda[:, 0, :]*Rlambda[:, 2, :], axis=1)
             divPhi[:, 2] = np.sum(Dlambda[:, 0, :]*Rlambda[:, 1, :], axis=1) - np.sum(Dlambda[:, 1, :]*Rlambda[:, 0, :], axis=1)
@@ -520,7 +520,7 @@ class RTFiniteElementSpace2d:
             #TODO:raise a error
             print("error")
 
-        return divPhi 
+        return divPhi
 
     def cell_to_dof(self):
         p = self.p

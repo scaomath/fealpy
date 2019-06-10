@@ -1,7 +1,11 @@
 from .GaussLobattoQuadrature import GaussLobattoQuadrature
-from .GaussLegendreQuadrture import GaussLegendreQuadrture
+from .GaussLegendreQuadrature import GaussLegendreQuadrature
 from .IntervalQuadrature import IntervalQuadrature
 from .TriangleQuadrature import TriangleQuadrature
 from .TetrahedronQuadrature import TetrahedronQuadrature
 from .QuadrangleQuadrature import QuadrangleQuadrature
+from .HexahedronQuadrature import HexahedronQuadrature
+
+from .FEMeshIntegralAlg import FEMeshIntegralAlg
+from .PolygonMeshIntegralAlg import PolygonMeshIntegralAlg
 

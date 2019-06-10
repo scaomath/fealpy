@@ -36,5 +36,10 @@ dependcies
 .fealpy.egg-info
 fealpy.egg-info
 dist
+<<<<<<< HEAD
 test/oct_tree.vtk
 mytest/oct_tree.vtk
+=======
+*.pdf
+*.png
+>>>>>>> upstream/master
