@@ -1,20 +1,25 @@
 import numpy as np
 
-
 class FEMeshIntegralAlg():
-    def __init__(self, integrator, mesh, measure=None):
+    def __init__(self, mesh, q, cellmeasure=None):
         self.mesh = mesh
-        self.integrator = integrator
-        if measure is None:
-            self.measure = mesh.entity_measure()
-        else:
-            self.measure = measure
+        self.integrator = mesh.integrator(q)
+        self.cellmeasure = cellmeasure if cellmeasure is not None \
+                else mesh.entity_measure('cell')
 
-    def integral(self, u, celltype=False):
+
+    def integral(self, u, celltype=False, barycenter=True):
         qf = self.integrator
         bcs, ws = qf.quadpts, qf.weights
-        val = u(bcs)
-        e = np.einsum('i, ij..., j->j...', ws, val, self.measure)
+        if barycenter:
+            val = u(bcs)
+        else:
+            ps = self.mesh.bc_to_point(bcs)
+            val = u(ps)
+        dim = len(ws.shape)
+        s0 = 'abcde'
+        s1 = '{}, {}j..., j->j...'.format(s0[0:dim], s0[0:dim])
+        e = np.einsum(s1, ws, val, self.cellmeasure)
         if celltype is True:
             return e
         else:
@@ -32,7 +37,7 @@ class FEMeshIntegralAlg():
 
     def L2_norm_1(self, uh, celltype=False):
         def f(x):
-            return np.sum(uh**2, axis=-1)*self.measure
+            return np.sum(uh**2, axis=-1)*self.cellmeasure
 
         e = self.integral(f, celltype=celltype)
         if celltype is False:
@@ -49,12 +54,12 @@ class FEMeshIntegralAlg():
             return e.sum()
         else:
             return e
-        return 
+        return
 
     def L2_error(self, u, uh, celltype=False):
-        def f(x):
-            xx = self.mesh.bc_to_point(x)
-            return (u(xx) - uh(x))**2
+        def f(bc):
+            xx = self.mesh.bc_to_point(bc)
+            return (u(xx) - uh(bc))**2
         e = self.integral(f, celltype=celltype)
         if celltype is False:
             return np.sqrt(e.sum())

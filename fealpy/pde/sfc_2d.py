@@ -6,7 +6,6 @@ import numpy as np
 from ..mesh import TriangleMesh, QuadrangleMesh
 from ..mesh.Quadtree import Quadtree
 
-
 class SFCModelData0:
     def __init__(self, eta=0.4):
         self.eta = eta 
@@ -17,17 +16,17 @@ class SFCModelData0:
             (1, 0),
             (1, 1),
             (0, 1)], dtype=np.float)
-        if meshtype is 'quadtree':
+        if meshtype == 'quadtree':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'quad':
+        elif meshtype == 'quad':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = QuadrangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'tri':
+        elif meshtype == 'tri':
             cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
@@ -75,17 +74,17 @@ class SFCModelData1:
             (1, 0),
             (1, 1),
             (0, 1)], dtype=np.float)
-        if meshtype is 'quadtree':
+        if meshtype == 'quadtree':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'quad':
+        elif meshtype == 'quad':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = QuadrangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'tri':
+        elif meshtype == 'tri':
             cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
@@ -138,17 +137,17 @@ class SFCModelData2:
             (1, 0),
             (1, 1),
             (0, 1)], dtype=np.float)
-        if meshtype is 'quadtree':
+        if meshtype == 'quadtree':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'quad':
+        elif meshtype == 'quad':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = QuadrangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'tri':
+        elif meshtype == 'tri':
             cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)

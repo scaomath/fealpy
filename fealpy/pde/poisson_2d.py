@@ -2,9 +2,209 @@ import numpy as np
 
 from ..mesh.TriangleMesh import TriangleMesh
 from ..mesh.Quadtree import Quadtree
+from ..mesh.QuadrangleMesh import QuadrangleMesh
 from ..mesh.Tritree import Tritree
 from ..mesh.StructureQuadMesh import StructureQuadMesh
+from ..mesh.TriangleMesh import TriangleMesh, TriangleMeshWithInfinityNode
+from ..mesh.PolygonMesh import PolygonMesh
 
+class TwoHolesData:
+    def __init__(self):
+        pass
+
+    def domain(self, domaintype='meshpy'):
+        if domaintype == 'meshpy':
+            from meshpy.triangle import MeshInfo
+            domain = MeshInfo()
+            points = np.zeros((16, 2), dtype=np.float)
+            points[0:4, :] = np.array(
+                    [(0.0, 0.0),
+                     (1.0, 0.0),
+                     (1.0, 1.0),
+                     (0.0, 1.0)], dtype=np.float)
+            idx = np.arange(5, -1, -1)
+            points[4:10, 0] = 0.25 + 0.1*np.cos(idx*np.pi/3)
+            points[4:10, 1] = 0.75 + 0.1*np.sin(idx*np.pi/3)
+            points[10:, 0] = 0.6 + 0.1*np.cos(idx*np.pi/3)
+            points[10:, 1] = 0.4 + 0.1*np.sin(idx*np.pi/3)
+
+            facets = np.zeros((16, 2), dtype=np.int)
+            facets[0:4, :] = np.array([(0, 1), (1, 2), (2, 3), (3, 0)],
+                    dtype=np.int)
+            facets[4:10, :] = np.array(
+                    [(4, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 4)],
+                    dtype=np.int)
+            facets[10:, :] = np.array(
+                    [(10, 11), (11, 12), (12, 13), (13, 14),
+                        (14, 15), (15, 10)], dtype=np.int)
+            domain.set_points(points)
+            domain.set_facets(facets)
+            domain.set_holes([(0.25, 0.75), (0.6, 0.4)])
+        return domain
+
+    def init_mesh(self, n=4, meshtype='tri', h=0.1):
+        """ generate the initial mesh
+        """
+        from meshpy.triangle import build
+        domain = self.domain(domaintype='meshpy')
+        mesh = build(domain, max_volume=h**2)
+        node = np.array(mesh.points, dtype=np.float)
+        cell = np.array(mesh.elements, dtype=np.int)
+        if meshtype == 'tri':
+            return TriangleMesh(node, cell)
+        elif meshtype == 'polygon':
+            mesh = TriangleMeshWithInfinityNode(TriangleMesh(node, cell))
+            pnode, pcell, pcellLocation = mesh.to_polygonmesh()
+            return PolygonMesh(pnode, pcell, pcellLocation)
+
+    def diffusion_coefficient(self, p):
+        x = p[..., 0]
+        y = p[..., 1]
+        val = 1 + 10*x**2 + y**2
+        return val
+
+    def solution(self, p):
+        """ The exact solution 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        val = 0.0 
+        return val
+
+    def source(self, p):
+        """ The right hand side of Possion equation
+        INPUT:
+            p: array object,  
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        val = 1.0 
+        return val
+
+    def gradient(self, p):
+        """ The gradient of the exact solution 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        val = np.zeros(p.shape, dtype=np.float)
+        val[..., 0] = 0.0
+        val[..., 1] = 0.0
+        return val
+
+    def dirichlet(self, p):
+        return 0.0
+
+    def neuman(self, p):
+        """ Neuman  boundary condition
+        """
+        pass
+
+    def robin(self, p):
+        pass
+
+class CosCosData:
+    """
+    -\Delta u = f
+    u = cos(pi*x)*cos(pi*y)
+    """
+    def __init__(self):
+        pass
+
+    def domain(self):
+        return np.array([0, 1, 0, 1])
+
+    def init_mesh(self, n=4, meshtype='tri', h=0.1):
+        """ generate the initial mesh
+        """
+        node = np.array([
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (0, 1)], dtype=np.float)
+
+        if meshtype == 'quadtree':
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int)
+            mesh = Quadtree(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        if meshtype == 'quad':
+            node = np.array([
+                (0, 0),
+                (1, 0),
+                (1, 1),
+                (0, 1),
+                (0.5, 0),
+                (1, 0.4),
+                (0.3, 1),
+                (0, 0.6),
+                (0.5, 0.45)], dtype=np.float)
+            cell = np.array([
+                (0, 4, 8, 7), (4, 1, 5, 8),
+                (7, 8, 6, 3), (8, 5, 2, 6)], dtype=np.int)
+            mesh = QuadrangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'tri':
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
+            mesh = TriangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'stri':
+            mesh = StructureQuadMesh([0, 1, 0, 1], h)
+            return mesh
+        else:
+            raise ValueError("".format)
+
+
+    def solution(self, p):
+        """ The exact solution 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        val = np.cos(pi*x)*np.cos(pi*y)
+        return val
+
+
+    def source(self, p):
+        """ The right hand side of Possion equation
+        INPUT:
+            p: array object,  
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        val = 2*pi*pi*np.cos(pi*x)*np.cos(pi*y)
+        return val
+
+
+    def gradient(self, p):
+        """ The gradient of the exact solution 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        val = np.zeros(p.shape, dtype=np.float)
+        val[..., 0] = -pi*np.sin(pi*x)*np.cos(pi*y)
+        val[..., 1] = -pi*np.cos(pi*x)*np.sin(pi*y)
+        return val
+
+    def dirichlet(self, p):
+        return self.solution(p)
+
+    def neuman(self, p, n):
+        """ Neuman  boundary condition
+        p: (NQ, NE, 2)
+        n: (NE, 2)
+        """
+        grad = self.gradient(p) # (NQ, NE, 2)
+        val = np.sum(grad*n, axis=-1)
+        return val
+
+    def robin(self, p):
+        pass
 
 class ffData:
     def __init__(self):
@@ -17,17 +217,17 @@ class ffData:
             (1, 1),
             (0, 1)], dtype=np.float)
 
-        if meshtype is 'tri':
+        if meshtype == 'tri':
             cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'quadtree':
+        elif meshtype == 'quadtree':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'tritree':
+        elif meshtype == 'tritree':
             cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
             mesh = Tritree(node, cell)
             mesh.uniform_refine(n)
@@ -77,7 +277,7 @@ class KelloggData:
             (-1, 1),
             (0, 1),
             (1, 1)], dtype=np.float)
-        if meshtype is 'tri':
+        if meshtype == 'tri':
             cell = np.array([
                 (1, 4, 0),
                 (3, 0, 4),
@@ -89,7 +289,7 @@ class KelloggData:
                 (5, 8, 4)], dtype=np.int)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
-        elif meshtype is 'quadtree':
+        elif meshtype == 'quadtree':
             cell = np.array([
                 (0, 1, 4, 3),
                 (1, 2, 5, 4),
@@ -204,7 +404,7 @@ class LShapeRSinData:
             (-1, 1),
             (0, 1),
             (1, 1)], dtype=np.float)
-        if meshtype is 'tri':
+        if meshtype == 'tri':
             cell = np.array([
                 (1, 3, 0),
                 (2, 0, 3),
@@ -215,7 +415,7 @@ class LShapeRSinData:
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'quadtree':
+        elif meshtype == 'quadtree':
             cell = np.array([
                 (0, 1, 3, 2),
                 (2, 3, 6, 5),
@@ -223,7 +423,7 @@ class LShapeRSinData:
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'tritree':
+        elif meshtype == 'tritree':
             cell = np.array([
                 (1, 3, 0),
                 (2, 0, 3),
@@ -237,8 +437,10 @@ class LShapeRSinData:
         else:
             raise ValueError("I don't know the meshtype %s".format(meshtype))
 
-    def domain(self, n):
-        pass
+    def domain(self):
+        points = [[0, 0], [1, 0], [1, 1], [-1, 1], [-1, -1], [0, -1]]
+        facets = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0)]
+        return points, facets
 
     def solution(self, p):
         x = p[..., 0]
@@ -284,7 +486,7 @@ class CrackData:
         pass
 
     def init_mesh(self, n=4, meshtype='tri'):
-        if meshtype is 'tri':
+        if meshtype == 'tri':
             node = np.array([
                 (0, -1),
                 (-1, 0),
@@ -301,7 +503,7 @@ class CrackData:
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'quadtree':
+        elif meshtype == 'quadtree':
             r = 1-2**(1/2)/2
             a = 1/2 - 2**(1/2)/2
             rr = 1/2
@@ -340,7 +542,7 @@ class CrackData:
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'tritree':
+        elif meshtype == 'tritree':
             node = np.array([
                 (0, -1),
                 (-1, 0),
@@ -392,11 +594,7 @@ class CrackData:
         return self.solution(p)
 
 
-class CosCosData:
-    """
-    -\Delta u = f
-    u = cos(pi*x)*cos(pi*y)
-    """
+class TwoSigularData:
     def __init__(self):
         pass
 
@@ -404,57 +602,64 @@ class CosCosData:
         """ generate the initial mesh
         """
         node = np.array([
-            (0, 0),
-            (1, 0),
+            (-1, -1),
+            (1, -1),
             (1, 1),
-            (0, 1)], dtype=np.float)
+            (-1, 1)], dtype=np.float)
 
-        if meshtype is 'quadtree':
+        if meshtype == 'quadtree':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'tri':
+        elif meshtype == 'tri':
             cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'stri':
+        elif meshtype == 'stri':
             mesh = StructureQuadMesh([0, 1, 0, 1], h)
             return mesh
         else:
             raise ValueError("".format)
 
     def solution(self, p):
-        """ The exact solution 
+        """ The exact solution
         """
         x = p[..., 0]
         y = p[..., 1]
-        pi = np.pi
-        val = np.cos(pi*x)*np.cos(pi*y)
-        return val
+        t0 = (x + 0.5)**2 + (y - 0.5)**2 + 0.01
+        t1 = (x - 0.5)**2 + (y + 0.5)**2 + 0.01
+        return 1/t0 - 1/t1
 
     def source(self, p):
         """ The right hand side of Possion equation
         INPUT:
-            p: array object,  
+            p: array object,
         """
         x = p[..., 0]
         y = p[..., 1]
-        pi = np.pi
-        val = 2*pi*pi*np.cos(pi*x)*np.cos(pi*y)
+        t0 = (x + 0.5)**2 + (y - 0.5)**2 + 0.01
+        t1 = (x - 0.5)**2 + (y + 0.5)**2 + 0.01
+        val = (
+                (2*x - 1.0)*(4*x - 2.0)/t1**3 -
+                (2*x + 1.0)*(4*x + 2.0)/t0**3 -
+                (2*y - 1.0)*(4*y - 2.0)/t0**3 +
+                (2*y + 1.0)*(4*y + 2.0)/t1**3 + 4/t0**2 - 4/t1**2
+            )
+
         return val
 
-
     def gradient(self, p):
-        """ The gradient of the exact solution 
+        """ The gradient of the exact solution
         """
         x = p[..., 0]
         y = p[..., 1]
-        pi = np.pi
+        t0 = (x + 0.5)**2 + (y - 0.5)**2 + 0.01
+        t1 = (x - 0.5)**2 + (y + 0.5)**2 + 0.01
         val = np.zeros(p.shape, dtype=np.float)
-        val[..., 0] = -pi*np.sin(pi*x)*np.cos(pi*y)
-        val[..., 1] = -pi*np.cos(pi*x)*np.sin(pi*y)
+        val[..., 0] = -(1.0 - 2*x)/t1**2 + (-2*x - 1.0)/t0**2
+        val[..., 1] =(1.0 - 2*y)/t0**2 - (-2*y - 1.0)/t1**2
         return val
 
     def dirichlet(self, p):
@@ -467,6 +672,74 @@ class CosCosData:
 
     def robin(self, p):
         pass
+
+class CornerSigularData:
+    def __init__(self):
+        pass
+
+    def init_mesh(self, n=4, meshtype='tri', h=0.1):
+        """ generate the initial mesh
+        """
+        node = np.array([
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (0, 1)], dtype=np.float)
+
+        if meshtype == 'quadtree':
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int)
+            mesh = Quadtree(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'tri':
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
+            mesh = TriangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'stri':
+            mesh = StructureQuadMesh([0, 1, 0, 1], h)
+            return mesh
+        else:
+            raise ValueError("".format)
+
+    def solution(self, p):
+        """ The exact solution
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        return (x**2 + y**2)**0.2 
+
+    def source(self, p):
+        """ The right hand side of Possion equation
+        INPUT:
+            p: array object,
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        val = -0.16*(x**2 + y**2)**(-0.8)
+        return val
+
+    def gradient(self, p):
+        """ The gradient of the exact solution
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        val = np.zeros(p.shape, dtype=np.float)
+        val[..., 0] = 0.4*x*(x**2 + y**2)**(-0.8)
+        val[..., 1] = 0.4*y*(x**2 + y**2)**(-0.8)
+        return val
+
+    def dirichlet(self, p):
+        return self.solution(p)
+
+    def neuman(self, p):
+        """ Neuman  boundary condition
+        """
+        pass
+
+    def robin(self, p):
+        pass
+
 
 class SinSinData:
     def __init__(self):
@@ -482,17 +755,17 @@ class SinSinData:
             (1, -1),
             (1, 1),
             (-1, 1)], dtype=np.float)
-        if meshtype is 'quadtree':
+        if meshtype == 'quadtree':
             cell = np.array([(0, 1, 2, 3)], dtype=np.int)
             mesh = Quadtree(point, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'tri':
+        elif meshtype == 'tri':
             cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
             mesh = TriangleMesh(point, cell)
             mesh.uniform_refine(n)
             return mesh
-        elif meshtype is 'stri':
+        elif meshtype == 'stri':
             mesh = StructureQuadMesh([0, 1, 0, 1], nx, ny)
             return mesh
         else:

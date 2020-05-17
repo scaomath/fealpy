@@ -4,8 +4,12 @@ Virtual Element Space
 """
 
 import numpy as np
+from numpy.linalg import inv
+from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, spdiags, eye
+
 from .function import Function
 from ..quadrature import GaussLobattoQuadrature
+from ..quadrature import GaussLegendreQuadrature
 from .ScaledMonomialSpace2d import ScaledMonomialSpace2d
 
 
@@ -97,14 +101,14 @@ class VEMDof2d():
         node = mesh.entity('node')
 
         if p == 1:
-            return node 
+            return node
         if p > 1:
             NN = mesh.number_of_nodes()
-            GD = mesh.geo_dimension() 
+            GD = mesh.geo_dimension()
             NE = mesh.number_of_edges()
 
             ipoint = np.zeros((NN+(p-1)*NE, GD), dtype=np.float)
-            ipoint[:NN, :] = node 
+            ipoint[:NN, :] = node
             edge = mesh.entity('edge')
 
             qf = GaussLobattoQuadrature(p + 1)
@@ -141,7 +145,7 @@ class VirtualElementSpace2d():
 
     def value(self, uh, bc):
         pass
-    
+
     def grad_value(self, uh, bc):
         pass
 
@@ -155,20 +159,21 @@ class VirtualElementSpace2d():
         f = Function(self, dim=dim, array=array)
         return f
 
-
     def interpolation(self, u, integral=None):
         mesh = self.mesh
         NN = mesh.number_of_nodes()
         NE = mesh.number_of_edges()
         p = self.p
         ipoint = self.dof.interpolation_points()
-        uI = self.function() 
+        uI = self.function()
         uI[:NN+(p-1)*NE] = u(ipoint)
         if p > 1:
             phi = self.smspace.basis
 
             def f(x, cellidx):
-                return np.einsum('ij, ij...->ij...', u(x), phi(x, cellidx=cellidx, p=p-2))
+                return np.einsum(
+                        'ij, ij...->ij...',
+                        u(x), phi(x, cellidx=cellidx, p=p-2))
 
             bb = integral(f, celltype=True)/self.smspace.area[..., np.newaxis]
             uI[NN+(p-1)*NE:] = bb.reshape(-1)
@@ -195,4 +200,5 @@ class VirtualElementSpace2d():
         elif type(dim) is tuple:
             shape = (gdof, ) + dim
         return np.zeros(shape, dtype=np.float)
+
 

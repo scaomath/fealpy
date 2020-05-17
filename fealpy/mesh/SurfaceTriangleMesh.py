@@ -1,13 +1,14 @@
 
 import numpy as np
-from ..functionspace.lagrange_fem_space import LagrangeFiniteElementSpace
-from ..quadrature import TriangleQuadrature
 from types import ModuleType
+
+from fealpy.functionspace import LagrangeFiniteElementSpace
+from ..quadrature import TriangleQuadrature
+
 from .mesh_tools import unique_row, find_node, find_entity, show_mesh_2d
 
-
 class SurfaceTriangleMesh():
-    def __init__(self, mesh, surface, p=1):
+    def __init__(self, mesh, surface, p=1, scale=None):
         """
         Initial a object of Surface Triangle Mesh.
 
@@ -35,23 +36,43 @@ class SurfaceTriangleMesh():
         self.mesh = mesh
         self.p = p
         self.space = LagrangeFiniteElementSpace(mesh, p)
-        self.node, d = surface.project(self.space.interpolation_points())
         self.surface = surface
         self.ds = mesh.ds
+        self.scale = scale
+        if scale is not None:
+            self.mesh.node *= scale
+
+        if scale is None:
+            self.node, d = self.surface.project(self.space.interpolation_points())
+        else:
+            self.node, d = self.surface.project(self.space.interpolation_points()/scale)
+            self.node *= scale
+
+        self.meshtype = 'stri'
         self.ftype = mesh.ftype
         self.itype = mesh.itype
         self.nodedata = {}
         self.celldata = {}
 
+    def vtk_cell_type(self):
+        return 69 
+
+    def project(self, p):
+        if self.scale is None:
+            return self.surface.project(p)
+        else:
+            p, d = self.surface.project(p/self.scale)
+            return p*self.scale, d*self.scale
+
     def integrator(self, k):
         return TriangleQuadrature(k)
 
     def entity(self, etype=2):
-        if etype in ['cell', 2]:
+        if etype in {'cell', 2}:
             return self.ds.cell
-        elif etype in ['edge', 1]:
+        elif etype in {'edge', 1}:
             return self.ds.edge
-        elif etype in ['node', 0]:
+        elif etype in {'node', 0}:
             return self.mesh.node
         else:
             raise ValueError("`entitytype` is wrong!")
@@ -59,7 +80,7 @@ class SurfaceTriangleMesh():
     def entity_measure(self, etype=2):
         p = self.p
         if etype in ['cell', 2]:
-            return self.area(idx=p+3)
+            return self.area(idx=p+1)
         else:
             raise ValueError("`entitytype` is wrong!")
 
@@ -78,16 +99,16 @@ class SurfaceTriangleMesh():
     def top_dimension(self):
         return 2
 
-    def jacobi_matrix(self, bc, cellidx=None):
+    def jacobi_matrix(self, bc, index=None):
         mesh = self.mesh
         cell2dof = self.space.dof.cell2dof
 
-        grad = self.space.grad_basis(bc, cellidx=cellidx)
+        grad = self.space.grad_basis(bc, index=index)
         # the tranpose of the jacobi matrix between S_h and K
-        Jh = mesh.jacobi_matrix(cellidx=cellidx)
+        Jh = mesh.jacobi_matrix(index=index)
 
         # the tranpose of the jacobi matrix between S_p and S_h
-        if cellidx is None:
+        if index is None:
             Jph = np.einsum(
                     'ijm, ...ijk->...imk',
                     self.node[cell2dof, :],
@@ -95,7 +116,7 @@ class SurfaceTriangleMesh():
         else:
             Jph = np.einsum(
                     'ijm, ...ijk->...imk',
-                    self.node[cell2dof[cellidx], :],
+                    self.node[cell2dof[index], :],
                     grad)
 
         # the transpose of the jacobi matrix between S_p and K
@@ -103,25 +124,27 @@ class SurfaceTriangleMesh():
         grad = np.einsum('ijk, ...imk->...imj', Jh, grad)
         return Jp, grad
 
-    def normal(self, bc, cellidx=None):
-        Js, _, ps = self.surface_jacobi_matrix(bc, cellidx=cellidx)
+    def normal(self, bc, index=None):
+        Js, _, ps = self.surface_jacobi_matrix(bc, index=index)
         n = np.cross(Js[..., 0, :], Js[..., 1, :], axis=-1)
         return n, ps
 
-    def surface_jacobi_matrix(self, bc, cellidx=None):
-        Jp, grad = self.jacobi_matrix(bc, cellidx=cellidx)
-        ps = self.bc_to_point(bc, cellidx=cellidx)
+    def surface_jacobi_matrix(self, bc, index=None):
+        Jp, grad = self.jacobi_matrix(bc, index=index)
+        ps = self.bc_to_point(bc, index=index)
         Jsp = self.surface.jacobi_matrix(ps)
         Js = np.einsum('...ijk, ...imk->...imj', Jsp, Jp)
         return Js, grad, ps
 
-    def bc_to_point(self, bc, cellidx=None):
-        basis = self.space.basis(bc)
+    def bc_to_point(self, bc, index=None):
+        phi = self.space.basis(bc)
         cell2dof = self.space.dof.cell2dof
-        if cellidx is None:
-            bcp = np.einsum('...j, ijk->...ik', basis, self.node[cell2dof, :])
+        if index is None:
+            bcp = np.einsum('...ij, ijk->...ik', phi, self.node[cell2dof, :])
         else:
-            bcp = np.einsum('...j, ijk->...ik', basis, self.node[cell2dof[cellidx], :])
+            bcp = np.einsum('...ij, ijk->...ik', phi, self.node[cell2dof[index], :])
+
+        bcp, _ = self.project(bcp)
         return bcp
 
     def area(self, idx=3):

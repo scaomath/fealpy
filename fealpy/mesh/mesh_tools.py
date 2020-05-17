@@ -14,12 +14,11 @@ from matplotlib.patches import Polygon
 def find_node(
         axes, node, index=None,
         showindex=False, color='r',
-        markersize=20, fontsize=24, fontcolor='k'):
+        markersize=20, fontsize=24, fontcolor='k', multiindex=None):
 
-    if len(node.shape) == 1:
-        node = np.r_['1', node.reshape(-1, 1), np.zeros((len(node), 1))]
-
-    if (index is None) or (index is 'all'):
+    if node.shape[1] == 1:
+        node = np.r_['1', node, np.zeros_like(node)]
+    if index is None:
         index = range(node.shape[0])
     elif (type(index) is np.ndarray) & (index.dtype == np.bool):
         index, = np.nonzero(index)
@@ -41,9 +40,28 @@ def find_node(
     if dim == 2:
         axes.scatter(bc[:, 0], bc[:, 1], c=color, s=markersize)
         if showindex:
-            for i in range(len(index)):
-                axes.text(bc[i, 0], bc[i, 1], str(index[i]),
-                        multialignment='center', fontsize=fontsize, color=fontcolor) 
+            if multiindex is not None:
+                if (type(multiindex) is np.ndarray) and (len(multiindex.shape) > 1):
+                    for i, idx in enumerate(multiindex):
+                        s = str(idx).replace('[', '(')
+                        s = s.replace(']', ')')
+                        s = s.replace(' ', ',')
+                        axes.text(bc[i, 0], bc[i, 1], s,
+                                multialignment='center',
+                                fontsize=fontsize, 
+                                color=fontcolor)
+                else:
+                    print(multiindex)
+                    for i, idx in enumerate(multiindex):
+                        axes.text(bc[i, 0], bc[i, 1], str(idx),
+                                multialignment='center',
+                                fontsize=fontsize, 
+                                color=fontcolor) 
+            else:
+                for i in range(len(index)):
+                    axes.text(bc[i, 0], bc[i, 1], str(index[i]),
+                            multialignment='center', fontsize=fontsize, 
+                            color=fontcolor) 
     else:
         axes.scatter(bc[:, 0], bc[:, 1], bc[:, 2], c=color, s=markersize)
         if showindex:
@@ -51,35 +69,35 @@ def find_node(
                 axes.text(bc[i, 0], bc[i, 1], bc[i, 2], str(index[i]),
                          multialignment='center', fontsize=fontsize, color=fontcolor) 
 
-def find_entity(axes, mesh, entity=None,
+
+def find_entity(
+        axes, mesh, entity='node',
         index=None, showindex=False,
-        color='r', markersize=20, 
-        fontsize=24, fontcolor='k'):
+        color='r', markersize=20,
+        fontsize=24, fontcolor='k', multiindex=None):
 
     bc = mesh.entity_barycenter(entity)
-    if (index is None) or ( index is 'all') :
-        if (entity is None) or (entity is 'node'): 
+    if index is None:
+        if entity == 'node':
             N = mesh.number_of_nodes()
             index = range(N)
-        elif entity is 'edge': 
+        elif entity == 'edge':
             NE = mesh.number_of_edges()
             index = range(NE)
-        elif entity is 'face':
+        elif entity == 'face':
             NF = mesh.number_of_faces()
             index = range(NF)
-        elif entity is 'cell':
+        elif entity == 'cell':
             NC = mesh.number_of_cells()
             index = range(NC)
         else:
-            pass
-            #TODO: raise a error
+            pass #TODO: raise a error
     elif (type(index) is np.ndarray) & (index.dtype == np.bool):
         index, = np.nonzero(index)
     elif (type(index) is list) & (type(index[0]) is np.bool):
         index, = np.nonzero(index)
     else:
-        pass
-        #TODO: raise a error
+        pass #TODO: raise a error
 
     if (type(color) is np.ndarray) & (np.isreal(color[0])):
         umax = color.max()
@@ -88,14 +106,32 @@ def find_entity(axes, mesh, entity=None,
         mapper = cm.ScalarMappable(norm=norm, cmap='rainbow')
         color = mapper.to_rgba(color)
 
-    dim = mesh.geo_dimension() 
+    dim = mesh.geo_dimension()
     bc = bc[index]
     if dim == 2:
         axes.scatter(bc[:, 0], bc[:, 1], c=color, s=markersize)
         if showindex:
-            for i in range(len(index)):
-                axes.text(bc[i, 0], bc[i, 1], str(index[i]), 
-                        multialignment='center', fontsize=fontsize, color=fontcolor) 
+            if multiindex is not None:
+                if (type(multiindex) is np.ndarray):
+                    for i,idx in enumerate(multiindex):
+                        s = str(idx).replace('[', '(')
+                        s = s.replace(']', ')')
+                        s = s.replace(' ', ',')
+                        axes.text(bc[i, 0], bc[i, 1], s,
+                                multialignment='center',
+                                fontsize=fontsize, 
+                                color=fontcolor) 
+                else:
+                    for i,idx in enumerate(multiindex):
+                        axes.text(bc[i, 0], bc[i, 1], idx,
+                                multialignment='center',
+                                fontsize=fontsize, 
+                                color=fontcolor) 
+            else:
+                for i in range(len(index)):
+                    axes.text(bc[i, 0], bc[i, 1], str(index[i]),
+                            multialignment='center', fontsize=fontsize, 
+                            color=fontcolor) 
     else:
         axes.scatter(bc[:, 0], bc[:, 1], bc[:, 2], c=color, s=markersize)
         if showindex:
@@ -106,6 +142,73 @@ def find_entity(axes, mesh, entity=None,
                         multialignment='center',
                         fontsize=fontsize, color=fontcolor)
 
+def show_halfedge_mesh(axes, mesh,
+        index=None, showindex=False, aspect='equal',
+        nodecolor='r', edgecolor=['r', 'k'], 
+        markersize=20, fontsize=5, fontcolor='k', 
+        linewidth=1, multiindex=None, showaxis=False):
+
+    try:
+        axes.set_aspect(aspect)
+    except NotImplementedError:
+        pass
+
+    if showaxis is False:
+        axes.set_axis_off()
+    else:
+        axes.set_axis_on()
+
+    node = mesh.entity('node')
+    halfedge = mesh.entity('halfedge')
+
+
+    p1 = node[halfedge[:, 0]]
+    p0 = node[halfedge[halfedge[:, 4], 0]]
+
+    w = np.array([(0,1),(-1,0)])
+    v = p1 - p0
+    p0 += 0.005*v@w
+    p1 += 0.005*v@w
+    ec = (p0 + p1)/2.0
+
+    v *= 0.9
+    p0 = ec - v/2.0
+    p1 = ec + v/2.0
+    
+    ec += 0.04*v@w
+    h = np.sqrt(np.sum(v**2, axis=-1))
+
+    axes.scatter(node[:, 0], node[:, 1], c=nodecolor, s=markersize)
+
+    NE = p0.shape[0]
+    for i in range(NE):
+        if halfedge[i, 5] == 1:
+            axes.arrow(
+                p0[i, 0], p0[i, 1], v[i, 0], v[i, 1], 
+                shape='right', linewidth=h[i]*linewidth, 
+                color=edgecolor[0], width=0.01*h[i], head_length=0.02*h[i])
+        else:
+            axes.arrow(
+                p0[i, 0], p0[i, 1], v[i, 0], v[i, 1], 
+                shape='right', linewidth=h[i]*linewidth,
+                color=edgecolor[1], width=0.01*h[i], head_length=0.02*h[i])
+
+    if showindex:
+        for i in range(NE):
+            if halfedge[i, 5] == 1:
+                axes.text(
+                        ec[i, 0], ec[i, 1],
+                        str(i),
+                        multialignment='center',
+                        fontsize=fontsize, color=edgecolor[0])
+            else:
+                axes.text(
+                        ec[i, 0], ec[i, 1],
+                        str(i),
+                        multialignment='center',
+                        fontsize=fontsize, color=edgecolor[1])
+
+
 def show_mesh_1d(
         axes, mesh,
         nodecolor='k',
@@ -114,7 +217,7 @@ def show_mesh_1d(
         linewidths=1, markersize=20,
         showaxis=False):
     axes.set_aspect(aspect)
-    if showaxis is False:
+    if showaxis == False:
         axes.set_axis_off()
     else:
         axes.set_axis_on()
@@ -122,14 +225,14 @@ def show_mesh_1d(
     node = mesh.entity('node')
     cell = mesh.entity('cell')
 
-    dim = mesh.geo_dimension() 
-    if dim == 1:
-        node = np.r_['1', node.reshape(-1, 1), np.zeros((len(node), 1))]
+    if node.shape[1] == 1:
+        node = np.r_['1', node, np.zeros_like(node)]
 
     axes.scatter(node[:, 0], node[:, 1], color=nodecolor, s=markersize)
     vts = node[cell, :]
 
-    if dim < 3:
+    GD = mesh.geo_dimension()
+    if GD < 3:
         lines = LineCollection(vts, linewidths=linewidths, colors=cellcolor)
         return axes.add_collection(lines)
     else:
@@ -144,8 +247,12 @@ def show_mesh_2d(
         linewidths=1, markersize=20,
         showaxis=False, showcolorbar=False, cmap='gnuplot2'):
 
-    axes.set_aspect(aspect)
-    if showaxis is False:
+    try:
+        axes.set_aspect(aspect)
+    except NotImplementedError:
+        pass
+
+    if showaxis == False:
         axes.set_axis_off()
     else:
         axes.set_axis_on()
@@ -170,13 +277,13 @@ def show_mesh_2d(
     node = mesh.entity('node')
     cell = mesh.entity('cell')
 
-    if mesh.meshtype is not 'polygon':
+    if mesh.meshtype not in {'polygon', 'hepolygon', 'halfedge'}:
         if mesh.geo_dimension() == 2:
             poly = PolyCollection(node[cell[:, mesh.ds.ccw], :])
         else:
             poly = a3.art3d.Poly3DCollection(node[cell, :])
     else:
-        cellLocation = mesh.ds.cellLocation
+        cell, cellLocation = cell
         NC = mesh.number_of_cells()
         patches = [
                 Polygon(node[cell[cellLocation[i]:cellLocation[i+1]], :], True)
@@ -211,8 +318,11 @@ def show_mesh_3d(
         linewidths=0.5, markersize=0,
         showaxis=False, alpha=0.8, shownode=False, showedge=False, threshold=None):
 
-    axes.set_aspect('equal')
-    if showaxis is False:
+    try:
+        axes.set_aspect(aspect)
+    except NotImplementedError:
+        pass
+    if showaxis == False:
         axes.set_axis_off()
     else:
         axes.set_axis_on()
@@ -225,12 +335,12 @@ def show_mesh_3d(
         nodecolor = mapper.to_rgba(nodecolor)
 
     node = mesh.node
-    if shownode is True:
+    if shownode:
         axes.scatter(
                 node[:, 0], node[:, 1], node[:, 2],
                 color=nodecolor, s=markersize)
 
-    if showedge is True:
+    if showedge:
         edge = mesh.ds.edge
         vts = node[edge]
         edges = a3.art3d.Line3DCollection(
@@ -238,6 +348,7 @@ def show_mesh_3d(
                linewidths=linewidths,
                color=edgecolor)
         return axes.add_collection3d(edges)
+
     face = mesh.boundary_face(threshold=threshold)
     faces = a3.art3d.Poly3DCollection(
             node[face],
@@ -249,7 +360,7 @@ def show_mesh_3d(
     box = np.zeros((2, 3), dtype=np.float)
     box[0, :] = np.min(node, axis=0)
     box[1, :] = np.max(node, axis=0)
-    axes.scatter(box[:, 0], box[:, 1], box[:, 2])
+    axes.scatter(box[:, 0], box[:, 1], box[:, 2], s=0)
     return h
 
 

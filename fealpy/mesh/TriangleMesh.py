@@ -2,16 +2,17 @@ import numpy as np
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, spdiags, bmat, eye
 from .Mesh2d import Mesh2d, Mesh2dDataStructure
 from ..quadrature import TriangleQuadrature
-
+from ..quadrature import GaussLegendreQuadrature
 
 class TriangleMeshDataStructure(Mesh2dDataStructure):
     localEdge = np.array([(1, 2), (2, 0), (0, 1)])
+    localFace = np.array([(1, 2), (2, 0), (0, 1)])
     ccw = np.array([0, 1, 2])
     V = 3
     E = 3
     F = 1
-    def __init__(self, N, cell):
-        super(TriangleMeshDataStructure, self).__init__(N, cell)
+    def __init__(self, NN, cell):
+        super(TriangleMeshDataStructure, self).__init__(NN, cell)
 
 class TriangleMesh(Mesh2d):
     def __init__(self, node, cell):
@@ -30,13 +31,18 @@ class TriangleMesh(Mesh2d):
         self.celldata = {}
         self.nodedata = {}
         self.edgedata = {}
+        self.facedata = self.edgedata
+        self.meshdata = {}
 
     def vtk_cell_type(self):
         VTK_TRIANGLE = 5
         return VTK_TRIANGLE
 
-    def integrator(self, k):
-        return TriangleQuadrature(k)
+    def integrator(self, k, etype='cell'):
+        if etype in {'cell', 2}:
+            return TriangleQuadrature(k)
+        elif etype in {'edge', 'face', 1}:
+            return GaussLegendreQuadrature(k)
 
     def copy(self):
         return TriangleMesh(self.node.copy(), self.ds.cell.copy());
@@ -60,28 +66,92 @@ class TriangleMesh(Mesh2d):
         NN = len(node)
         self.ds.reinit(NN, cell)
 
+    def to_quadmesh(self):
+        from ..mesh import QuadrangleMesh
+
+        NC = self.number_of_cells()
+        NN = self.number_of_nodes()
+        NE = self.number_of_edges()
+        node0 = self.entity('node')
+        cell0 = self.entity('cell')
+        ec = self.entity_barycenter('edge')
+        cc = self.entity_barycenter('cell')
+        cell2edge = self.ds.cell_to_edge()
+
+        node = np.r_['0', node0, ec, cc]
+        cell = np.zeros((3*NC, 4), dtype=self.itype)
+        idx = np.arange(NC)
+        cell[:NC, 0] = NN + NE + idx
+        cell[:NC, 1] = cell2edge[:, 0] + NN
+        cell[:NC, 2] = cell0[:, 2]
+        cell[:NC, 3] = cell2edge[:, 1] + NN
+
+        cell[NC:2*NC, 0] = cell[:NC, 0]
+        cell[NC:2*NC, 1] = cell2edge[:, 1] + NN
+        cell[NC:2*NC, 2] = cell0[:, 0]
+        cell[NC:2*NC, 3] = cell2edge[:, 2] + NN
+
+        cell[2*NC:3*NC, 0] = cell[:NC, 0]
+        cell[2*NC:3*NC, 1] = cell2edge[:, 2] + NN
+        cell[2*NC:3*NC, 2] = cell0[:, 1]
+        cell[2*NC:3*NC, 3] = cell2edge[:, 0] + NN
+        return QuadrangleMesh(node, cell)
+
+    def egde_merge(self, h0):
+        edge = self.entity('edge')
+        h = self.entity_measure('edge')
+        isShortEdge = h < h0
+
+
+    def line_walk(self, p):
+        NC = self.number_of_cells()
+        NP = p.shape[0]
+        cell = self.entity('cell')
+
+        cidx = np.random.randint(0, NC, NP)
+        isNotOK = np.ones(NP, dtype=np.bool)
+        while isNotOK.sum() > 0:
+            idx0, = np.find(isNotOK)
+            cidx0 = cidx[isNotOK]
+            pp = p[isNotOK]
+
+            a = np.zeros((len(cidx0), 3), dtype=self.ftype)
+            p0 = cell[cidx0, 0]
+            p1 = cell[cidx0, 1]
+            p2 = cell[cidx0, 2]
+
+            v0 = p0 - pp
+            v1 = p1 - pp
+            v2 = p2 - pp
+            a[:, 0] = np.cross(v1, v2)
+            a[:, 1] = np.cross(v2, v0)
+            a[:, 2] = np.cross(v0, v1)
+            idx = np.argmin(a, axis=-1)
+
+            isOK = a[range(a.shape[0]), idx] >= 0
+
     def circumcenter(self):
         node = self.node
         cell = self.ds.cell
-        dim = self.geo_dimension()
+        GD = self.geo_dimension()
 
         v0 = node[cell[:,2],:] - node[cell[:,1],:]
         v1 = node[cell[:,0],:] - node[cell[:,2],:]
         v2 = node[cell[:,1],:] - node[cell[:,0],:]
         nv = np.cross(v2, -v1)
-        if dim == 2:
-            area = nv/2.0 
+        if GD == 2:
+            area = nv/2.0
             x2 = np.sum(node**2, axis=1, keepdims=True)
             w0 = x2[cell[:,2]] + x2[cell[:,1]]
             w1 = x2[cell[:,0]] + x2[cell[:,2]]
             w2 = x2[cell[:,1]] + x2[cell[:,0]]
             W = np.array([[0, -1],[1, 0]], dtype=self.ftype)
-            fe0 = w0*v0@W 
+            fe0 = w0*v0@W
             fe1 = w1*v1@W
-            fe2 = w2*v2@W 
+            fe2 = w2*v2@W
             c = 0.25*(fe0 + fe1 + fe2)/area.reshape(-1,1)
             R = np.sqrt(np.sum((c-node[cell[:,0], :])**2,axis=1))
-        elif dim == 3:
+        elif GD == 3:
             length = np.sqrt(np.sum(nv**2, axis=1))
             n = nv/length.reshape((-1, 1))
             l02 = np.sum(v1**2, axis=1, keepdims=True)
@@ -172,8 +242,9 @@ class TriangleMesh(Mesh2d):
 
             if surface is not None:
                 newNode, _ = surface.project(newNode)
+
             self.node = np.concatenate((node, newNode), axis=0)
-            p = np.r_['-1', cell, edge2newNode[cell2edge]] 
+            p = np.r_['-1', cell, edge2newNode[cell2edge]]
             cell = np.r_['0', p[:, [0, 5, 4]], p[:, [5, 1, 3]], p[:, [4, 3, 2]], p[:, [3, 4, 5]]]
             NN = self.node.shape[0]
             self.ds.reinit(NN, cell)
@@ -184,13 +255,13 @@ class TriangleMesh(Mesh2d):
         for i in range(n):
             self.bisect()
 
-    def bisect(self, isMarkedCell='all', returnim=False, refine=None):
+    def bisect(self, isMarkedCell=None, returnim=False, refine=None):
 
         NN = self.number_of_nodes()
         NC = self.number_of_cells()
         NE = self.number_of_edges()
 
-        if isMarkedCell is 'all':
+        if isMarkedCell is None:
             isMarkedCell = np.ones(NC, dtype=np.bool)
 
         cell = self.entity('cell')
@@ -340,19 +411,19 @@ class TriangleMesh(Mesh2d):
 
     def adaptive(self, eta, options):
         theta = options['theta']
-        if options['method'] is 'mean':
+        if options['method'] == 'mean':
             options['numrefine'] = np.around(
                     np.log2(eta/(theta*np.mean(eta)))
                 )
-        elif options['method'] is 'max':
+        elif options['method'] == 'max':
             options['numrefine'] = np.around(
                     np.log2(eta/(theta*np.max(eta)))
                 )
-        elif options['method'] is 'median':
+        elif options['method'] == 'median':
             options['numrefine'] = np.around(
                     np.log2(eta/(theta*np.median(eta)))
                 )
-        elif options['method'] is 'min':
+        elif options['method'] == 'min':
             options['numrefine'] = np.around(
                     np.log2(eta/(theta*np.min(eta)))
                 )
@@ -585,16 +656,16 @@ class TriangleMesh(Mesh2d):
         v0 = node[cell[:, 2], :] - node[cell[:, 1], :]
         v1 = node[cell[:, 0], :] - node[cell[:, 2], :]
         v2 = node[cell[:, 1], :] - node[cell[:, 0], :]
-        dim = self.geo_dimension()
+        GD = self.geo_dimension()
         nv = np.cross(v2, -v1)
-        Dlambda = np.zeros((NC, 3, dim), dtype=self.ftype)
-        if dim == 2:
+        Dlambda = np.zeros((NC, 3, GD), dtype=self.ftype)
+        if GD == 2:
             length = nv
             W = np.array([[0, 1], [-1, 0]])
             Dlambda[:,0,:] = v0@W/length.reshape((-1, 1))
             Dlambda[:,1,:] = v1@W/length.reshape((-1, 1))
             Dlambda[:,2,:] = v2@W/length.reshape((-1, 1))
-        elif dim == 3:
+        elif GD == 3:
             length = np.sqrt(np.square(nv).sum(axis=1))
             n = nv/length.reshape((-1, 1))
             Dlambda[:,0,:] = np.cross(n, v0)/length.reshape((-1,1))
@@ -602,20 +673,18 @@ class TriangleMesh(Mesh2d):
             Dlambda[:,2,:] = np.cross(n, v2)/length.reshape((-1,1))
         return Dlambda
 
-    def jacobi_matrix(self, cellidx=None):
+    def jacobi_matrix(self, index=None):
         """
         Return
         ------
-        J : numpy.array
+        J : numpy.ndarray
             `J` is the transpose o  jacobi matrix of each cell.
             The shape of `J` is  `(NC, 2, 2)` or `(NC, 2, 3)`
         """
         node = self.node
         cell = self.ds.cell
-        if cellidx is None:
-            J = node[cell[:, [1, 2]]] - node[cell[:, [0]]]
-        else:
-            J = node[cell[cellidx, [1, 2]]] - node[cell[cellidx, [0]]]
+        index = index if index is not None else np.s_[:]
+        J = node[cell[index, [1, 2]]] - node[cell[index, [0]]]
         return J
 
     def rot_lambda(self):
@@ -625,60 +694,41 @@ class TriangleMesh(Mesh2d):
         v0 = node[cell[:, 2], :] - node[cell[:, 1], :]
         v1 = node[cell[:, 0], :] - node[cell[:, 2], :]
         v2 = node[cell[:, 1], :] - node[cell[:, 0], :]
-        dim = self.geo_dimension()
+        GD = self.geo_dimension()
         nv = np.cross(v2, -v1)
-        Rlambda = np.zeros((NC, 3, dim), dtype=self.ftype)
-        if dim == 2:
+        Rlambda = np.zeros((NC, 3, GD), dtype=self.ftype)
+        if GD == 2:
             length = nv
             Rlambda[:,0,:] = v0/length.reshape((-1, 1))
             Rlambda[:,1,:] = v1/length.reshape((-1, 1))
             Rlambda[:,2,:] = v2/length.reshape((-1, 1))
-        elif dim == 3:
+        elif GD == 3:
             length = np.sqrt(np.square(nv).sum(axis=1))
             Rlambda[:,0,:] = v0/length.reshape((-1, 1))
             Rlambda[:,1,:] = v1/length.reshape((-1, 1))
             Rlambda[:,2,:] = v2/length.reshape((-1, 1))
         return Rlambda
 
-    def area(self, index=None):
-        node = self.node
-        cell = self.ds.cell
-        dim = self.node.shape[1]
-        if index is None:
-            v1 = node[cell[:, 1], :] - node[cell[:, 0], :]
-            v2 = node[cell[:, 2], :] - node[cell[:, 0], :]
-        else:
-            v1 = node[cell[index, 1], :] - node[cell[index, 0], :]
-            v2 = node[cell[index, 2], :] - node[cell[index, 0], :]
-        nv = np.cross(v2, -v1)
-        if dim == 2:
-            a = nv/2.0
-        elif dim == 3:
-            a = np.sqrt(np.square(nv).sum(axis=1))/2.0
-        return a
-
     def cell_area(self, index=None):
         node = self.node
         cell = self.ds.cell
-        dim = self.node.shape[1]
-        if index is None:
-            v1 = node[cell[:, 1], :] - node[cell[:, 0], :]
-            v2 = node[cell[:, 2], :] - node[cell[:, 0], :]
-        else:
-            v1 = node[cell[index, 1], :] - node[cell[index, 0], :]
-            v2 = node[cell[index, 2], :] - node[cell[index, 0], :]
+        GD = self.geo_dimension()
+        index = index if index is not None else np.s_[:]
+        v1 = node[cell[index, 1], :] - node[cell[index, 0], :]
+        v2 = node[cell[index, 2], :] - node[cell[index, 0], :]
         nv = np.cross(v2, -v1)
-        if dim == 2:
+        if GD == 2:
             a = nv/2.0
-        elif dim == 3:
+        elif GD == 3:
             a = np.sqrt(np.square(nv).sum(axis=1))/2.0
         return a
 
-    def bc_to_point(self, bc):
+    def bc_to_point(self, bc, etype='cell', index=None):
         node = self.node
-        cell = self.ds.cell
-        p = np.einsum('...j, ijk->...ik', bc, node[cell])
-        return p 
+        entity = self.entity(etype)
+        index = index if index is not None else np.s_[:]
+        p = np.einsum('...j, ijk->...ik', bc, node[entity[index]])
+        return p
 
 
 
@@ -688,25 +738,25 @@ class TriangleMeshWithInfinityNode:
         bdEdgeIdx = mesh.ds.boundary_edge_index()
         NBE = len(bdEdgeIdx)
         NC = mesh.number_of_cells()
-        N = mesh.number_of_nodes()
+        NN = mesh.number_of_nodes()
 
         self.itype = mesh.itype
         self.ftype = mesh.ftype
 
         newCell = np.zeros((NC + NBE, 3), dtype=self.itype)
         newCell[:NC, :] = mesh.ds.cell
-        newCell[NC:, 0] = N 
+        newCell[NC:, 0] = NN
         newCell[NC:, 1:3] = edge[bdEdgeIdx, 1::-1]
 
         node = mesh.node
         self.node = np.append(node, [[np.nan, np.nan]], axis=0)
-        self.ds = TriangleMeshDataStructure(N+1, newCell)
-        self.center = np.append(mesh.barycenter(),
+        self.ds = TriangleMeshDataStructure(NN+1, newCell)
+        self.center = np.append(mesh.entity_barycenter(),
                 0.5*(node[edge[bdEdgeIdx, 0], :] + node[edge[bdEdgeIdx, 1], :]), axis=0)
         self.meshtype = 'tri'
 
     def number_of_nodes(self):
-        return self.node.shape[0] 
+        return self.node.shape[0]
 
     def number_of_edges(self):
         return self.ds.NE

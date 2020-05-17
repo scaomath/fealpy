@@ -1,4 +1,6 @@
 import numpy as np
+from types import ModuleType
+
 
 class Function(np.ndarray):
     def __new__(cls, space, dim=None, array=None):
@@ -6,43 +8,60 @@ class Function(np.ndarray):
             self = space.array(dim=dim).view(cls)
         else:
             self = array.view(cls)
-        self.space = space 
+        self.space = space
         return self
 
     def index(self, i):
         return Function(self.space, array=self[:, i])
 
-    def __call__(self, bc, cellidx=None):
+    def __call__(self, bc, index=None):
         space = self.space
-        return space.value(self, bc, cellidx=cellidx)
+        return space.value(self, bc, index=index)
 
-    def value(self, bc, cellidx=None):
+    def value(self, bc, index=None):
         space = self.space
-        return space.value(self, bc, cellidx=cellidx)
+        return space.value(self, bc, index=index)
 
-    def grad_value(self, bc, cellidx=None):
+    def grad_value(self, bc, index=None):
         space = self.space
-        return space.grad_value(self, bc, cellidx=cellidx)
+        return space.grad_value(self, bc, index=index)
 
-    def div_value(self, bc, cellidx=None):
+    def laplace_value(self, bc, index=None):
         space = self.space
-        return space.div_value(self, bc, cellidx=cellidx)
+        return space.laplace_value(self, bc, index=index)
 
-    def hessian_value(self, bc, cellidx=None):
+    def div_value(self, bc, index=None):
         space = self.space
-        return space.hessian_value(self, bc, cellidx=cellidx)
+        return space.div_value(self, bc, index=index)
 
-    def add_plot(self, plt):
+    def hessian_value(self, bc, index=None):
+        space = self.space
+        return space.hessian_value(self, bc, index=index)
+
+    def edge_value(self, bc, index=None):
+        space = self.space
+        return space.edge_value(self, bc)
+
+    def add_plot(self, plot, cmap=None):
+
+        if isinstance(plot, ModuleType):
+            fig = plot.figure()
+            fig.set_facecolor('white')
+            axes = fig.gca()
+        else:
+            axes = plot
         mesh = self.space.mesh
-        if mesh.meshtype is 'tri':
+        if mesh.meshtype == 'tri':
             node = mesh.entity('node')
             cell = mesh.entity('cell')
-            fig1 = plt.figure()
-            fig1.set_facecolor('white')
-            axes = fig1.gca(projection='3d')
             axes.plot_trisurf(
                     node[:, 0], node[:, 1],
-                    cell, self, cmap=plt.cm.jet, lw=0.0)
+                    cell, self, cmap=cmap, lw=0.0)
+            return axes
+        elif mesh.meshtype in {'polygon', 'halfedge'}:
+            node = mesh.entity('node')
+            axes.plot_trisurf(
+                    node[:, 0], node[:, 1], self, cmap=cmap, lw=0.0)
             return axes
         else:
             return None

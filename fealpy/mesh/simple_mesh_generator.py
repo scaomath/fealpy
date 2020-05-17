@@ -1,15 +1,16 @@
 
 import numpy as np
 from .TriangleMesh import TriangleMesh, TriangleMeshWithInfinityNode
-from .QuadrangleMesh import QuadrangleMesh 
-from .HexahedronMesh import HexahedronMesh 
-from .PolygonMesh import PolygonMesh 
+from .QuadrangleMesh import QuadrangleMesh
+from .HexahedronMesh import HexahedronMesh
+from .TetrahedronMesh import TetrahedronMesh
+from .PolygonMesh import PolygonMesh
 
-from .level_set_function import DistDomain2d, DistDomain3d
-from .level_set_function import dcircle, drectangle
-from .level_set_function import ddiff 
-from .sizing_function import huniform
-from .distmesh import DistMesh2d 
+from ..geometry import DistDomain2d, DistDomain3d
+from ..geometry import dcircle, drectangle
+from ..geometry import ddiff
+from ..geometry import huniform
+from .distmesh import DistMesh2d
 
 
 def tri_to_polygonmesh(mesh, n):
@@ -124,13 +125,28 @@ def triangle(box, h, meshtype='tri'):
     from meshpy.triangle import MeshInfo, build
     mesh_info = MeshInfo()
     mesh_info.set_points([(box[0], box[2]), (box[1], box[2]), (box[1], box[3]), (box[0], box[3])])
-    mesh_info.set_facets([[0,1], [1,2], [2,3], [3,0]])  
+    mesh_info.set_facets([[0, 1], [1, 2], [2, 3], [3, 0]])
     mesh = build(mesh_info, max_volume=h**2)
     node = np.array(mesh.points, dtype=np.float)
     cell = np.array(mesh.elements, dtype=np.int)
-    if meshtype is 'tri':
+    if meshtype == 'tri':
         return TriangleMesh(node, cell)
-    elif meshtype is 'polygon':
+    elif meshtype == 'polygon':
+        mesh = TriangleMeshWithInfinityNode(TriangleMesh(node, cell))
+        pnode, pcell, pcellLocation = mesh.to_polygonmesh()
+        return PolygonMesh(pnode, pcell, pcellLocation)
+
+def triangle_polygon_domain(points, facets, h, meshtype='tri'):
+    from meshpy.triangle import MeshInfo, build
+    mesh_info = MeshInfo()
+    mesh_info.set_points(points)
+    mesh_info.set_facets(facets)
+    mesh = build(mesh_info, max_volume=h**2)
+    node = np.array(mesh.points, dtype=np.float)
+    cell = np.array(mesh.elements, dtype=np.int)
+    if meshtype == 'tri':
+        return TriangleMesh(node, cell)
+    elif meshtype == 'polygon':
         mesh = TriangleMeshWithInfinityNode(TriangleMesh(node, cell))
         pnode, pcell, pcellLocation = mesh.to_polygonmesh()
         return PolygonMesh(pnode, pcell, pcellLocation) 
@@ -140,27 +156,67 @@ def distmesh2d(fd, h0, bbox, pfix, meshtype='tri'):
     domain = DistDomain2d(fd, fh, bbox, pfix)
     distmesh2d = DistMesh2d(domain, h0)
     distmesh2d.run()
-    if meshtype is 'tri':
+    if meshtype == 'tri':
         return distmesh2d.mesh
-    elif meshtype is 'polygon':
+    elif meshtype == 'polygon':
         mesh = TriangleMeshWithInfinityNode(distmesh2d.mesh)
         pnode, pcell, pcellLocation = mesh.to_polygonmesh()
         return PolygonMesh(pnode, pcell, pcellLocation) 
 
 def unitcircledomainmesh(h0, meshtype='tri', dtype=np.float):
-    fd = lambda p: dcircle(p,(0,0),1)
+    fd = lambda p: dcircle(p, (0,0), 1)
     fh = huniform
     bbox = [-1.2, 1.2, -1.2, 1.2]
     pfix = None 
     domain = DistDomain2d(fd, fh, bbox, pfix)
     distmesh2d = DistMesh2d(domain, h0)
     distmesh2d.run()
-    if meshtype is 'tri':
+    if meshtype == 'tri':
         return distmesh2d.mesh
-    elif meshtype is 'polygon':
+    elif meshtype == 'polygon':
         mesh = TriangleMeshWithInfinityNode(distmesh2d.mesh)
         pnode, pcell, pcellLocation = mesh.to_polygonmesh()
         return PolygonMesh(pnode, pcell, pcellLocation) 
+
+def boxmesh3d(box, nx=10, ny=10, nz=10, meshtype='hex'):
+    N = (nx+1)*(ny+1)*(nz+1)
+    NC = nx*ny*nz
+    node = np.zeros((N, 3), dtype=np.float)
+    X, Y, Z = np.mgrid[
+            box[0]:box[1]:complex(0, nx+1), 
+            box[2]:box[3]:complex(0, ny+1),
+            box[4]:box[5]:complex(0, nz+1)
+            ]
+    node[:, 0] = X.flatten()
+    node[:, 1] = Y.flatten()
+    node[:, 2] = Z.flatten()
+
+    idx = np.arange(N).reshape(nx+1, ny+1, nz+1)
+    c = idx[:-1, :-1, :-1]
+
+    cell = np.zeros((NC, 8), dtype=np.int)
+    nyz = (ny + 1)*(nz + 1)
+    cell[:, 0] = c.flatten()
+    cell[:, 1] = cell[:, 0] + nyz
+    cell[:, 2] = cell[:, 1] + nz + 1
+    cell[:, 3] = cell[:, 0] + nz + 1
+    cell[:, 4] = cell[:, 0] + 1
+    cell[:, 5] = cell[:, 4] + nyz
+    cell[:, 6] = cell[:, 5] + nz + 1
+    cell[:, 7] = cell[:, 4] + nz + 1
+    if meshtype == 'hex':
+        return HexahedronMesh(node, cell)
+    elif meshtype == 'tet':
+        localCell = np.array([
+            [0, 1, 2, 6],
+            [0, 5, 1, 6],
+            [0, 4, 5, 6],
+            [0, 7, 4, 6],
+            [0, 3, 7, 6],
+            [0, 2, 3, 6]], dtype=np.int)
+        cell = cell[:, localCell].reshape(-1, 4)
+        return TetrahedronMesh(node, cell)
+
 
 def cubehexmesh(cube, nx=10, ny=10, nz=10):
     N = (nx+1)*(ny+1)*(nz+1)

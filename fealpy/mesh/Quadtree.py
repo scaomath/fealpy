@@ -26,9 +26,9 @@ class Quadtree(QuadrangleMesh):
     def leaf_cell(self, celltype='quad'):
         child = self.child
         cell = self.ds.cell[child[:, 0] == -1]
-        if celltype is 'quad':
+        if celltype == 'quad':
             return cell
-        elif celltype is 'tri':
+        elif celltype == 'tri':
             return np.r_['0', cell[:, [1, 2, 0]], cell[:, [3, 0, 2]]]
 
     def is_leaf_cell(self, idx=None):
@@ -47,12 +47,12 @@ class Quadtree(QuadrangleMesh):
             self,
             method='mean',
             maxrefine=3,
-            maxcoarsen=0,
+            maxcoarsen=3,
             theta=1.0,
-            maxsize=None,
-            minsize=None,
+            maxsize=1e-2,
+            minsize=1e-12,
             data=None,
-            HB=None,
+            HB=True,
             imatrix=False,
             disp=True
             ):
@@ -76,26 +76,36 @@ class Quadtree(QuadrangleMesh):
             self.refine_1()
 
     def adaptive(self, eta, options):
+
+        if options['HB'] is True:
+            HB = np.zeros((len(eta), 2), dtype=np.int)
+            HB[:, 0] = np.arange(len(eta))
+            HB[:, 1] = np.arange(len(eta))
+            options['HB'] = HB
+
         leafCellIdx = self.leaf_cell_index()
         NC = self.number_of_cells()
         options['numrefine'] = np.zeros(NC, dtype=np.int8)
         theta = options['theta']
-        if options['method'] is 'mean':
+        if options['method'] == 'mean':
             options['numrefine'][leafCellIdx] = np.around(
                     np.log2(eta/(theta*np.mean(eta)))
                 )
-        elif options['method'] is 'max':
+            # options['numrefine'][leafCellIdx] = eta
+        elif options['method'] == 'max':
             options['numrefine'][leafCellIdx] = np.around(
                     np.log2(eta/(theta*np.max(eta)))
                 )
-        elif options['method'] is 'median':
+        elif options['method'] == 'median':
             options['numrefine'][leafCellIdx] = np.around(
                     np.log2(eta/(theta*np.median(eta)))
                 )
-        elif options['method'] is 'min':
+        elif options['method'] == 'min':
             options['numrefine'][leafCellIdx] = np.around(
                     np.log2(eta/(theta*np.min(eta)))
                 )
+        elif options['method'][leafCellIdx]== 'numrefine':
+            options['numrefine'][leafCellIdx]= eta
         elif isinstance(options['method'], float):
             val = options['method']
             options['numrefine'][leafCellIdx] = np.around(
@@ -186,15 +196,35 @@ class Quadtree(QuadrangleMesh):
                             '\n std size of cells: ', np.std(h[leafCellIdx])
                         )
 
-                flag = (2*h > options['maxsize']) & (options['numrefine'] < 0)
-                options['numrefine'][flag] = 0
+                if options['maxsize'] is not None:
+                    flag = (2*h > options['maxsize']) & (options['numrefine'] < 0)
+                    options['numrefine'][flag] = 0
                 isMarkedCell = (options['numrefine'] < 0)
 
     def refine_1(self, isMarkedCell=None, options={'disp': True}):
         if isMarkedCell is None:
             # 默认加密所有的叶子单元
             idx = self.leaf_cell_index()
+            if ('HB' in options) and (options['HB'] is not None):
+                isLeafCell = self.is_leaf_cell()
+                NC = isLeafCell.sum()
+                HB = np.zeros((4*NC, 2), dtype=self.itype)
+                HB[:, 0] = range(4*NC)
+                HB[:, 1] = np.repeat(options['HB'][:, 1], 4)
         else:
+            if ('HB' in options) and (options['HB'] is not None):
+                isNonMarkedCell = ~isMarkedCell
+                isLeafCell = self.is_leaf_cell()
+                flag0 = isNonMarkedCell[isLeafCell]
+                flag1 = isMarkedCell[isLeafCell]
+                NHB0 = flag0.sum()
+                NHB1 = flag1.sum()
+                NHB = NHB0 + 4*NHB1
+                HB = np.zeros((NHB, 2), dtype=np.int)
+                HB[:, 0] = range(NHB)
+                HB[0:NHB0, 1] = options['HB'][flag0, 1]
+                HB[NHB0:,  1] = np.repeat(options['HB'][flag1, 1], 4)
+                options['HB'] = HB
             idx, = np.nonzero(isMarkedCell)
 
         if len(idx) > 0:
@@ -258,6 +288,7 @@ class Quadtree(QuadrangleMesh):
                     cvalue = np.sum(value[cell[isNeedCutCell]], axis=1)/4
                     options['data'][key] = np.concatenate((value, evalue, cvalue), axis=0)
 
+
             NEC = len(edgeCenter)
             NCC = len(cellCenter)
             edge2center[isNeedCutEdge] = np.arange(N, N+NEC)
@@ -316,8 +347,7 @@ class Quadtree(QuadrangleMesh):
 
         idx, = np.nonzero(isBranchCell)
         isCoarsenCell = np.sum(isMarkedCell[child[isBranchCell]], axis=1) == 4
-
-        idx = idx[isCoarsenCell]
+        idx = idx[isCoarsenCell] # 需要被粗化的单元
 
         if len(idx) > 0:
 
@@ -334,23 +364,40 @@ class Quadtree(QuadrangleMesh):
             isRemainNode = np.zeros(NN, dtype=np.bool)
             isRemainNode[cell[isRemainCell, :]] = True
 
+            NNC = isRemainCell.sum()
+            if NNC == NC: # 如果保留单元个数与原始单元个数相同
+                return
+
             cell = cell[isRemainCell]
             child = child[isRemainCell]
             parent = parent[isRemainCell]
 
             # 子单元不需要保留的单元， 是新的叶子单元
-
             childIdx, = np.nonzero(child[:, 0] > -1)
             isNewLeafCell = (
                     np.sum(isRemainCell[child[childIdx, :]], axis=1) == 0
                 )
             child[childIdx[isNewLeafCell], :] = -1
 
+            # 老单元与新单元的编号映射关系
             cellIdxMap = np.zeros(NC, dtype=self.itype)
-            NNC = isRemainCell.sum()
             cellIdxMap[isRemainCell] = np.arange(NNC)
+            # 下面的代码有 bug 
+            # cellIdxMap[child[idx, :]] = np.reshape(idx, (-1, 1)) 
+            cellIdxMap[self.child[idx, :]] = np.reshape(idx, (-1, 1))
             child[child > -1] = cellIdxMap[child[child > -1]]
             parent[parent > -1] = cellIdxMap[parent[parent > -1]]
+
+            if ('HB' in options) and (options['HB'] is not None):
+                # 粗化要更新 HB[:, 0]
+                leafIdx = self.leaf_cell_index()
+                idx0 = leafIdx[options['HB'][:, 0]] # 叶子单元在所有单元中对应的编号
+                idx0 = cellIdxMap[idx0] # 在保留单元中的编号
+                isLeafCell = (child[:, 0] == -1) # 新网格的叶子单元
+                idxMap = np.zeros(NNC, dtype=self.itype)
+                idxMap[isLeafCell] = range(isLeafCell.sum())
+                options['HB'][:, 0] = idxMap[idx0]
+
             self.child = child
             self.parent = parent
 
@@ -365,6 +412,7 @@ class Quadtree(QuadrangleMesh):
                 options['numrefine'] = options['numrefine'][isRemainCell]
 
             if ('data' in options) and (options['data'] is not None):
+                # 这里只是做线性插值
                 for key, value in options['data'].items():
                     options['data'][key] = value[isRemainNode]
 

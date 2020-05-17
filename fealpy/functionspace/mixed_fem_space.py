@@ -1,6 +1,8 @@
 import numpy as np
 from .function import Function
-from .lagrange_fem_space import LagrangeFiniteElementSpace
+
+from fealpy.functionspace import LagrangeFiniteElementSpace
+from ..quadrature import  IntervalQuadrature
 
 class HuZhangFiniteElementSpace():
     """
@@ -64,7 +66,7 @@ class HuZhangFiniteElementSpace():
         """
         p = self.p
         gdim = self.geo_dimension()
-        tdim = self.tensor_dimension() 
+        tdim = self.tensor_dimension()
 
         mesh = self.mesh
 
@@ -424,7 +426,7 @@ class HuZhangFiniteElementSpace():
                 TF = np.einsum('ijk, kmn->ijmn', self.TF[cell2face[:, i]], self.T)
                 uI[cell2dof[:, isDof, :]] = np.einsum('ikmn, ijmn->ikj', val[..., isDof, :, :], TF) 
         return uI
-        
+ 
         def function(self, dim=None):
             f = Function(self)
         return f
@@ -461,6 +463,8 @@ class RTFiniteElementSpace2d:
             phi[..., 1, :] = bc[..., 2, np.newaxis, np.newaxis]*Rlambda[:, 0, :] - bc[..., 0, np.newaxis, np.newaxis]*Rlambda[:, 2, :]
             phi[..., 2, :] = bc[..., 0, np.newaxis, np.newaxis]*Rlambda[:, 1, :] - bc[..., 1, np.newaxis, np.newaxis]*Rlambda[:, 0, :]
             phi *= cell2edgeSign.reshape(-1, 3, 1)
+        elif p == 1:
+            pass
         else:
             raise ValueError('p')
 
@@ -478,21 +482,21 @@ class RTFiniteElementSpace2d:
         cell2edgeSign = self.cell_to_edge_sign()
         W = np.array([[0, 1], [-1, 0]], dtype=np.float)
         Rlambda= mesh.rot_lambda()
-        Dlambda = Rlambda@W
+        Dlambda = mesh.grad_lambda()
         if p == 0:
             A = np.einsum('...i, ...j->...ij', Rlambda[:, 2, :], Dlambda[:, 1, :])
             B = np.einsum('...i, ...j->...ij', Rlambda[:, 1, :], Dlambda[:, 2, :]) 
-            gradPhi[:, 0, :, :] = A - B 
+            gradPhi[:, 0, :, :] = A - B
 
             A = np.einsum('...i, ...j->...ij', Rlambda[:, 0, :], Dlambda[:, 2, :])
             B = np.einsum('...i, ...j->...ij', Rlambda[:, 2, :], Dlambda[:, 0, :])
-            gradPhi[:, 1, :, :] = A - B 
+            gradPhi[:, 1, :, :] = A - B
 
             A = np.einsum('...i, ...j->...ij', Rlambda[:, 1, :], Dlambda[:, 0, :])
             B = np.einsum('...i, ...j->...ij', Rlambda[:, 0, :], Dlambda[:, 1, :])
-            gradPhi[:, 2, :, :] = A - B 
+            gradPhi[:, 2, :, :] = A - B
 
-            gradPhi *= cell2edgeSign.reshape(-1, 3, 1, 1) 
+            gradPhi *= cell2edgeSign.reshape(-1, 3, 1, 1)
         else:
             #TODO:raise a error
             print("error")
@@ -510,7 +514,7 @@ class RTFiniteElementSpace2d:
         W = np.array([[0, 1], [-1, 0]], dtype=np.float)
 
         Rlambda = mesh.rot_lambda()
-        Dlambda = Rlambda@W
+        Dlambda = mesh.grad_lambda()
         if p == 0:
             divPhi[:, 0] = np.sum(Dlambda[:, 1, :]*Rlambda[:, 2, :], axis=1) - np.sum(Dlambda[:, 2, :]*Rlambda[:, 1, :], axis=1)
             divPhi[:, 1] = np.sum(Dlambda[:, 2, :]*Rlambda[:, 0, :], axis=1) - np.sum(Dlambda[:, 0, :]*Rlambda[:, 2, :], axis=1)
@@ -532,7 +536,7 @@ class RTFiniteElementSpace2d:
 
         ldof = self.number_of_local_dofs()
         if p == 0:
-            cell2dof = mesh.ds.cell2edge
+            cell2dof = mesh.ds.cell_to_edge()
         else:
             #TODO: raise a error 
             print('error!')
@@ -549,14 +553,73 @@ class RTFiniteElementSpace2d:
             #TODO: raise a error
             print("error!")
 
-
     def number_of_local_dofs(self):
         p = self.p
         if p==0:
             return 3
         else:
-            #TODO: raise a error
             print("error!")
+
+    def value(self, uh, bc, cellidx=None):
+        phi = self.basis(bc)
+        cell2dof = self.dof.cell2dof
+        dim = len(uh.shape) - 1
+        s0 = 'abcdefg'
+        s1 = '...ijm, ij{}->...i{}m'.format(s0[:dim], s0[:dim])
+        if cellidx is None:
+            val = np.einsum(s1, phi, uh[cell2dof])
+        else:
+            val = np.einsum(s1, phi, uh[cell2dof[cellidx]])
+        return val
+
+    def grad_value(self, uh, bc, cellidx=None):
+        gphi = self.grad_basis(bc, cellidx=cellidx)
+        cell2dof = self.dof.cell2dof
+        dim = len(uh.shape) - 1
+        s0 = 'abcdefg'
+        s1 = '...ijmn, ij{}->...i{}mn'.format(s0[:dim], s0[:dim])
+        if cellidx is None:
+            val = np.einsum(s1, gphi, uh[cell2dof])
+        else:
+            val = np.einsum(s1, gphi, uh[cell2dof[cellidx]])
+        return val
+
+    def div_value(self, uh, bc, cellidx=None):
+        val = self.grad_value(uh, bc, cellidx=None)
+        return val.trace(axis1=-2, axis2=-1)
+
+    def function(self, dim=None, array=None):
+        f = Function(self, dim=dim, array=array)
+        return f
+
+    def interpolation(self, u, returnfun=False):
+        mesh = self.mesh
+        node = mesh.entity('node')
+        edge = mesh.entity('edge')
+        NE = mesh.number_of_edges()
+        n = mesh.edge_unit_normal()
+        l = mesh.entity_measure('edge')
+
+        qf = IntervalQuadrature(3)
+        bcs, ws = qf.get_quadrature_points_and_weights()
+        points = np.einsum('kj, ijm->kim', bcs, node[edge])
+        val = u(points)
+        uh = np.einsum('k, kim, im, i->i', ws, val, n, l)
+
+        if returnfun is True:
+            return Function(self, array=uh)
+        else:
+            return uh
+
+    def array(self, dim=None):
+        gdof = self.number_of_global_dofs()
+        if dim is None:
+            shape = gdof
+        elif type(dim) is int:
+            shape = (gdof, dim)
+        elif type(dim) is tuple:
+            shape = (gdof, ) + dim
+        return np.zeros(shape, dtype=np.float)
 
 class BDMFiniteElementSpace2d:
     def __init__(self, mesh, p=1, dtype=np.float):

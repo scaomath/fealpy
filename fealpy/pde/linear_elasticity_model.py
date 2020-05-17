@@ -1,5 +1,410 @@
 import numpy as np
 
+class LinearElasticityTempalte():
+    def __init__(self):
+        pass
+
+    def domain(self):
+        pass
+
+    def init_mesh(self):
+        pass
+
+    def displacement(self, p):
+        pass
+
+    def jacobian(self, p):
+        pass
+
+    def strain(self, p):
+        pass
+
+    def stress(self, p):
+        pass
+
+    def source(self, p):
+        pass
+
+    def dirichlet(self, p):
+        pass
+
+    def neuman(self, p):
+        pass
+
+    def is_dirichlet_boundary(self, p):
+        pass
+
+    def is_neuman_boundary(self, p):
+        pass
+
+class BoxDomainData3d():
+    def __init__(self):
+        self.L = 1
+        self.W = 0.2
+
+        self.mu = 1
+        self.rho = 1
+
+        delta = self.W/self.L
+        gamma = 0.4*delta**2
+        beta = 1.25
+
+        self.lam = beta
+        self.g = gamma
+        self.d = np.array([0.0, 0.0, -1.0])
+
+    def domain(self):
+        return [0.0, self.L, 0.0, self.W, 0.0, self.W]
+
+    def init_mesh(self, n=1):
+        from fealpy.mesh.simple_mesh_generator import boxmesh3d
+        domain = self.domain()
+        mesh = boxmesh3d(domain, nx=5*n, ny=1*n, nz=1*n, meshtype='tet')
+        return mesh
+
+    def displacement(self, p):
+        pass
+
+    def jacobian(self, p):
+        pass
+
+    def strain(self, p):
+        pass
+
+    def stress(self, p):
+        pass
+
+    def source(self, p):
+        shape = len(p.shape[:-1])*(1,) + (-1, )
+        val = self.d*self.g*self.rho
+        return val.reshape(shape) 
+
+    def dirichlet(self, p):
+        shape = len(p.shape)*(1, )
+        val = np.array([0.0])
+        return val.reshape(shape)
+
+    def is_dirichlet_boundary(self, p):
+        return np.abs(p[..., 0]) < 1e-12
+
+
+class LShapeDomainData2d():
+    def __init__(self, E=1e+5, nu=0.499):
+
+        self.E = E 
+        self.nu = nu
+
+        self.lam = self.nu*self.E/((1+self.nu)*(1-2*self.nu))
+        self.mu = self.E/(2*(1+self.nu))
+
+        self.alpha = 0.544483736782
+
+        alpha = self.alpha
+        omega = 3*np.pi/4
+        lam = self.lam
+        mu = self.mu
+        cos = np.cos
+        sin = np.sin
+
+        self.C1 = -cos((alpha + 1)*omega)/cos((alpha - 1)*omega)
+        self.C2 = 2*(lam + 2*mu)/(lam + mu)
+
+    def domain(self, domaintype='meshpy'):
+        if domaintype == 'meshpy':
+            from meshpy.triangle import MeshInfo
+            domain = MeshInfo()
+            points = np.array([
+                (0, 0), (-1, -1), (0, -2), ( 1, -1),
+                (2, 0), ( 1,  1), (0,  2), (-1,  1)], dtype=np.float)
+            facets = np.array([
+                (0, 1), (1, 2), (2, 3), (3, 4), 
+                (4, 5), (5, 6), (6, 7), (7, 0)], dtype=np.int)
+            domain.set_points(points)
+            domain.set_facets(facets)
+            return domain
+        if domaintype == 'halfedge':
+            return None
+
+    def init_mesh(self, n=2, meshtype='tri', h=None):
+        """ generate the initial mesh
+        """
+        from fealpy.mesh import TriangleMesh
+        node = np.array([
+            (0, 0), (-1, -1), (0, -2), ( 1, -1),
+            (2, 0), ( 1,  1), (0,  2), (-1,  1)], dtype=np.float)
+        cell = np.array([
+            (1, 2, 0), (3, 0, 2), (4, 5, 3),
+            (0, 3, 5), (5, 6, 0), (7, 0, 6)], dtype=np.int)
+        mesh = TriangleMesh(node, cell)
+        mesh.uniform_refine(n=n)
+        return mesh
+
+    def displacement(self, p):
+        alpha = self.alpha
+        lam = self.lam
+        mu = self.mu
+        C1 = self.C1
+        C2 = self.C2
+
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        cos = np.cos
+        sin = np.sin
+
+        theta = np.arctan2(y, x)
+        theta = (theta >= 0)*theta + (theta < 0)*(theta+2*pi)
+        r = np.sqrt(x**2 + y**2)
+        val = np.zeros_like(p)
+
+        val[..., 0]  = -(alpha + 1)*cos((alpha+1)*theta)
+        val[..., 0] += (C2 - alpha - 1)*C1*cos((alpha -1)*theta)
+        val[..., 0] /= 2*mu
+        val[..., 0] *= r**alpha
+
+        val[..., 1]  = (alpha + 1)*sin((alpha+1)*theta)
+        val[..., 1] += (C2 + alpha - 1)*C1*sin((alpha -1)*theta)
+        val[..., 1] /= 2*mu
+        val[..., 1] *= r**alpha
+        return val
+
+    def jacobian(self, p):
+        alpha = self.alpha
+        lam = self.lam
+        mu = self.mu
+        C1 = self.C1
+        C2 = self.C2
+
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        cos = np.cos
+        sin = np.sin
+
+        theta = np.arctan2(y, x)
+        theta = (theta >= 0)*theta + (theta < 0)*(theta+2*pi)
+        r = np.sqrt(x**2 + y**2)
+
+        shape = p.shape[:-1] + (2, 2)
+        val = np.zeros(shape, dtype=p.dtype)
+
+        c0 = cos(theta*(alpha - 1))
+        c1 = cos(theta*(alpha + 1))
+        s0 = sin(theta*(alpha - 1))
+        s1 = sin(theta*(alpha + 1))
+        t = r**alpha/(2*mu*r**2)
+
+        val[..., 0, 0] += alpha*x*(C1*(C2 - alpha - 1)*c0 + (-alpha - 1)*c1)*t 
+        val[..., 0, 0] += (C1*y*(alpha - 1)*(C2 - alpha - 1)*s0
+                + y*(-alpha - 1)*(alpha + 1)*s1)*t
+
+        val[..., 0, 1] += alpha*y*(C1*(C2 - alpha - 1)*c0 + (-alpha - 1)*c1)*t
+        val[..., 0, 1] += (-C1*x*(alpha - 1)*(C2 - alpha - 1)*s0 
+                - x*(-alpha - 1)*(alpha + 1)*s1)*t
+
+        val[..., 1, 0] += alpha*x*(C1*(C2 + alpha - 1)*s0 + (alpha + 1)*s1)*t
+        val[..., 1, 0] += (-C1*y*(alpha - 1)*(C2 + alpha - 1)*c0
+            - y*(alpha + 1)**2*c1)*t
+
+        val[..., 1, 1] += alpha*y*(C1*(C2 + alpha - 1)*s0 + (alpha + 1)*s1)*t 
+        val[..., 1, 1] += (C1*x*(alpha - 1)*(C2 + alpha - 1)*c0
+            + x*(alpha + 1)**2*c1)*t
+        return val
+        
+    def strain(self, p):
+        val = self.jacobian(p)
+        t = (val[..., 0, 1] + val[..., 1, 0])/2
+        val[..., 0, 1] = t
+        val[..., 1, 0] = t
+        return val
+
+    def stress(self, p):
+        lam = self.lam
+        mu = sefl.mu
+
+        val = self.strain(p)
+        t = val.trace(axis1=-2, axis2=-1)[..., np.newaxis]
+        val *= 2*mu
+        idx = np.arange(2)
+        val[..., idx, idx] += t
+        return val
+
+    def source(self, p):
+        val = np.zeros_like(p)
+        return val
+
+    def dirichlet(self, p):
+        val = self.displacement(p)
+        return val
+
+    def neuman(self, p, n):
+        val = np.zeros_like(p)
+        return val
+
+    def is_dirichlet_boundary(self, p):
+        val = self.is_neuman_boundary(p)
+        return ~val
+
+    def is_neuman_boundary(self, p):
+        x = p[..., 0]
+        y = p[..., 1]
+        val = np.abs(np.abs(x) - np.abs(y)) < 1e-12
+        return val
+
+       
+
+class CookMembraneData():
+    def __init__(self, E=1e+5, nu=0.3):
+        self.E = E
+        self.nu = nu
+        self.lam = self.nu*self.E/((1+self.nu)*(1-2*self.nu))
+        self.mu = self.E/(2*(1+self.nu))
+
+    def domain(self, domaintype='meshpy'):
+        if domaintype == 'meshpy':
+            from meshpy.triangle import MeshInfo
+            domain = MeshInfo()
+            points = np.array([
+                (0, 0), (48, 44), (48, 60), (0, 44)], dtype=np.float)
+            facets = np.array([
+                (0, 1), (1, 2), (2, 3), (3, 0)], dtype=np.int)
+            domain.set_points(points)
+            domain.set_facets(facets)
+            return domain
+        if domaintype == 'halfedge':
+            return None
+
+    def init_mesh(self, meshtype='tri', h=0.1):
+        """ generate the initial mesh
+        """
+        from meshpy.triangle import build
+        domain = self.domain()
+        mesh = build(domain, max_volume=h**2)
+        node = np.array(mesh.points, dtype=np.float)
+        cell = np.array(mesh.elements, dtype=np.int)
+        if meshtype is 'tri':
+            mesh = TriangleMesh(node, cell)
+            return mesh 
+
+    def displacement(self, p):
+        return None
+
+    def strain(self, p):
+        return None
+
+    def stress(self, p):
+        return None
+
+    def source(self, p):
+        val = np.zeros(p.shape, dtype=p.dtype)
+        return val 
+
+    def neuman(self, p, n):  # p 是受到面力的节点坐标
+        """
+        Neuman  boundary condition
+        p: (NQ, NE, 2)
+        n: (NE, 2)
+        """
+        val = np.zeros_like(p)
+        val[..., 1] = 1
+        return val
+
+    def dirichlet(self, p):  
+        """
+        """
+        val = np.zeros_like(p) 
+        return val
+
+    def is_dirichlet_boundary(self, p):
+        x = p[..., 0]
+        return  np.abs(x) < 1e-12
+
+    def is_neuman_boundary(self, p):
+        x = p[..., 0]
+        return np.abs(x - 48) < 1e-12
+
+class CantileverBeam2d():
+    def __init__(self, E=3e+7, nu=0.3, P=1000, L=48, W=12):
+        self.E = E
+        self.nu = nu
+        self.lam = self.nu*self.E/((1+self.nu)*(1-2*self.nu))
+        self.mu = self.E/(2*(1+self.nu))
+
+        self.L = L  # length
+        self.W = W  # width 
+        self.P = P  # load at the right end
+        self.I = self.W**3/12
+
+    def domain(self):
+        return [0, self.L, -self.W/2, self.W/2]
+
+    def init_mesh(self, n=1):
+        from fealpy.mesh.simple_mesh_generator import  rectangledomainmesh
+        box = self.domain()
+        mesh = rectangledomainmesh(box, nx=8, ny=2)
+        mesh.uniform_refine(n)
+        return mesh
+
+    def displacement(self, p):
+        L = self.L
+        P = self.P
+        W = self.W
+        I = self.I
+        E = self.E
+        nu = self.nu
+
+        x = p[..., 0]
+        y = p[..., 1]
+        val = np.zeros(p.shape, dtype=np.float)
+        val[..., 0] = P*y/(6*E*I)*((6*L-3*x)*x+(2+nu)*(y**2 - W**2/4))
+        val[..., 1] = -P/(6*E*I)*(3*nu*y**2*(L-x)+(4+5*nu)*W**2*x/4+(3*L-x)*x**2)
+        return val
+
+    def strain(self, p):
+        pass
+
+    def stress(self, p):
+        P = self.P
+        L = self.L
+        I = self.I
+        W = self.W
+
+        x = p[..., 0]
+        y = p[..., 1]
+        shape = p.shape[:-1] + (2, 2)
+        val = np.zeros(shape, dtype=np.float)
+        val[..., 0, 0] = P*(L-x)*y/I
+        val[..., 0, 1] = -P/(2*I)*(W**2/4 - y**2)
+        val[..., 1, 0] = val[..., 0, 1] 
+        return val
+
+    def source(self, p):
+        val = np.zeros(p.shape, dtype=p.dtype)
+        return val
+
+    def neuman(self, p, n):  # p 是受到面力的节点坐标
+        """
+        Neuman  boundary condition
+        p: (NQ, NE, 2)
+        n: (NE, 2)
+        """
+        val = self.stress(p)
+        val = np.einsum('...ijk, ik->...ij', val, n)
+        return val
+
+    def dirichlet(self, p):  
+        """
+        """
+        val = self.displacement(p) 
+        return val
+
+    def is_dirichlet_boundary(self, p):
+        return  np.abs(p[..., 0]) < 1e-12
+
+    def is_neuman_boundary(self, p):
+        return np.abs(p[..., 0] - self.L) < 1e-12
+
+
 class QiModel3d():
     def __init__(self, lam=1.0, mu=0.5):
         self.lam = lam
@@ -8,13 +413,13 @@ class QiModel3d():
         from ..mesh import TetrahedronMesh
         node = np.array([
             [0, 0, 0],
-            [1, 0, 0], 
+            [1, 0, 0],
             [1, 1, 0],
             [0, 1, 0],
             [0, 0, 1],
-            [1, 0, 1], 
+            [1, 0, 1],
             [1, 1, 1],
-            [0, 1, 1]], dtype=np.float) 
+            [0, 1, 1]], dtype=np.float)
 
         cell = np.array([
             [0,1,2,6],
@@ -308,6 +713,17 @@ class HuangModel2d():
 #        val[..., 1] = pi**3*sin(2*pi*x)*(2*cos(2*pi*y) - 1)
 
         return val
+
+    def dirichlet(self, p):  
+        """
+        """
+        val = self.displacement(p) 
+        return val
+
+    def is_dirichlet_boundary(self, p):
+        eps = 1e-14
+        return (p[:,0] < eps) | (p[:,1] < eps) | (p[:, 0] > 1.0 - eps) | (p[:, 1] > 1.0 - eps)
+
 
 class Model2d():
     def __init__(self, lam=1.0, mu=0.5):

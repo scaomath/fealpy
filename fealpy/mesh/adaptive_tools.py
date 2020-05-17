@@ -2,11 +2,11 @@ import numpy as np
 
 def mark(eta, theta, method='L2'):
     isMarked = np.zeros(len(eta), dtype=np.bool)
-    if method is 'MAX':
+    if method == 'MAX':
         isMarked[eta > theta*np.max(eta)] = True
-    elif method is 'COARSEN':
+    elif method == 'COARSEN':
         isMarked[eta < theta*np.max(eta)] = True
-    elif method is 'L2':
+    elif method == 'L2':
         eta = eta**2
         idx = np.argsort(eta)[-1::-1]
         x = np.cumsum(eta[idx])
