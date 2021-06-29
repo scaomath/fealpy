@@ -64,7 +64,7 @@ class SurfaceTriangleMesh():
             p, d = self.surface.project(p/self.scale)
             return p*self.scale, d*self.scale
 
-    def integrator(self, k):
+    def integrator(self, k, etype='cell'):
         return TriangleQuadrature(k)
 
     def entity(self, etype=2):
@@ -79,10 +79,16 @@ class SurfaceTriangleMesh():
 
     def entity_measure(self, etype=2):
         p = self.p
-        if etype in ['cell', 2]:
-            return self.area(idx=p+1)
+        if etype in {'cell', 2}:
+            return self.area(p+1)
+        elif etype in {'edge', 'face', 1}:
+            return self.mesh.entity_measure('edge') 
         else:
             raise ValueError("`entitytype` is wrong!")
+
+    def entity_barycenter(self, etype=2):
+        p = self.p
+        return self.mesh.entity_barycenter(etype=etype)
 
     def number_of_nodes(self):
         return self.node.shape[0]
@@ -99,7 +105,7 @@ class SurfaceTriangleMesh():
     def top_dimension(self):
         return 2
 
-    def jacobi_matrix(self, bc, index=None):
+    def jacobi_matrix(self, bc, index=np.s_[:]):
         mesh = self.mesh
         cell2dof = self.space.dof.cell2dof
 
@@ -108,16 +114,10 @@ class SurfaceTriangleMesh():
         Jh = mesh.jacobi_matrix(index=index)
 
         # the tranpose of the jacobi matrix between S_p and S_h
-        if index is None:
-            Jph = np.einsum(
-                    'ijm, ...ijk->...imk',
-                    self.node[cell2dof, :],
-                    grad)
-        else:
-            Jph = np.einsum(
-                    'ijm, ...ijk->...imk',
-                    self.node[cell2dof[index], :],
-                    grad)
+        Jph = np.einsum(
+                'ijm, ...ijk->...imk',
+                self.node[cell2dof[index], :],
+                grad)
 
         # the transpose of the jacobi matrix between S_p and K
         Jp = np.einsum('...ijk, imk->...imj', Jph, Jh)
@@ -147,8 +147,8 @@ class SurfaceTriangleMesh():
         bcp, _ = self.project(bcp)
         return bcp
 
-    def area(self, idx=3):
-        integrator = self.integrator(idx)
+    def area(self, q=3):
+        integrator = self.integrator(q)
         bcs, ws = integrator.quadpts, integrator.weights
         Jp, _ = self.jacobi_matrix(bcs)
         n = np.cross(Jp[..., 0, :], Jp[..., 1, :], axis=-1)

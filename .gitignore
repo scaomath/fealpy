@@ -16,10 +16,11 @@ meviewer
 
 *.mat
 meshdata
-result
+result*
 build
 __pycache__
 results
+results1
 refineresults
 data
 matlab
@@ -41,3 +42,10 @@ dist
 *.fig
 *.vtk
 *.so
+*.swn
+*.swo
+*.vtu
+
+
+.vscode
+*.pickle

@@ -1,4 +1,7 @@
 import numpy as np
+
+from ..decorator  import cartesian 
+
 from fealpy.mesh.TetrahedronMesh import TetrahedronMesh
 
 
@@ -15,7 +18,7 @@ class CosCosCosData:
             [-1, -1, 1],
             [1, -1, 1],
             [1, 1, 1],
-            [-1, 1, 1]], dtype=np.float)
+            [-1, 1, 1]], dtype=np.float64)
 
         cell = np.array([
             [0, 1, 2, 6],
@@ -23,11 +26,13 @@ class CosCosCosData:
             [0, 4, 5, 6],
             [0, 7, 4, 6],
             [0, 3, 7, 6],
-            [0, 2, 3, 6]], dtype=np.int)
+            [0, 2, 3, 6]], dtype=np.int_)
         mesh = TetrahedronMesh(node, cell)
         mesh.uniform_refine(n)
+        mesh.label() # 标记最长边
         return mesh
 
+    @cartesian
     def solution(self, p):
         """ the exact solution
         """
@@ -37,6 +42,7 @@ class CosCosCosData:
         u = np.cos(np.pi*x)*np.cos(np.pi*y)*np.cos(np.pi*z)
         return u
 
+    @cartesian
     def gradient(self, p):
         """ The gradient of the exact solution
         """
@@ -52,6 +58,11 @@ class CosCosCosData:
         val[..., 2] = -pi*cos(pi*x)*cos(pi*y)*sin(pi*z)
         return val
 
+    @cartesian
+    def flux(self, p):
+        return -self.gradient(p)
+
+    @cartesian
     def source(self, p):
         x = p[..., 0]
         y = p[..., 1]
@@ -59,6 +70,102 @@ class CosCosCosData:
         val = 3*np.pi**2*np.cos(np.pi*x)*np.cos(np.pi*y)*np.cos(np.pi*z)
         return val
 
+    @cartesian
+    def dirichlet(self, p):
+        """Dilichlet boundary condition
+        """
+        return self.solution(p)
+    
+    @cartesian
+    def neumann(self, p, n):
+        """ 
+        Neuman  boundary condition
+
+        Parameters
+        ----------
+
+        p: (NQ, NE, 3)
+        n: (NE, 3)
+
+        grad*n : (NQ, NE, 3)
+        """
+        grad = self.gradient(p) # (NQ, NE, 3)
+        val = np.sum(grad*n, axis=-1) # (NQ, NE)
+        return val
+
+    @cartesian
+    def robin(self, p, n):
+        grad = self.gradient(p) # (NQ, NE, 3)
+        val = np.sum(grad*n, axis=-1)
+        shape = len(val.shape)*(1, )
+        kappa = np.array([1.0], dtype=np.float64).reshape(shape)
+        val += self.solution(p) 
+        return val, kappa
+
+
+class X2Y2Z2Data:
+    def __init__(self):
+        pass
+
+    def init_mesh(self, n=1, meshtype='tet'):
+        node = np.array([
+            [-1, -1, -1],
+            [1, -1, -1],
+            [1, 1, -1],
+            [-1, 1, -1],
+            [-1, -1, 1],
+            [1, -1, 1],
+            [1, 1, 1],
+            [-1, 1, 1]], dtype=np.float64)
+
+        cell = np.array([
+            [0, 1, 2, 6],
+            [0, 5, 1, 6],
+            [0, 4, 5, 6],
+            [0, 7, 4, 6],
+            [0, 3, 7, 6],
+            [0, 2, 3, 6]], dtype=np.int_)
+        mesh = TetrahedronMesh(node, cell)
+        mesh.uniform_refine(n)
+        mesh.label()
+        return mesh
+
+    @cartesian
+    def solution(self, p):
+        """ the exact solution
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        z = p[..., 2]
+        u = x**2*y**2*z**2
+        return u
+
+    @cartesian
+    def gradient(self, p):
+        """ The gradient of the exact solution
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        z = p[..., 2]
+        val = np.zeros(p.shape, dtype=p.dtype)
+        val[..., 0] = 2*x*y**2*z**2
+        val[..., 1] = 2*x**2*y*z**2
+        val[..., 2] = 2*x**2*y**2*z
+        return val
+
+    @cartesian
+    def flux(self, p):
+        return -self.gradient(p)
+
+    @cartesian
+    def source(self, p):
+        x = p[..., 0]
+        y = p[..., 1]
+        z = p[..., 2]
+        val = -(2*y**2*z**2 + 2*x**2*z**2 + 2*x**2*y**2)
+        return val
+
+    @cartesian
     def dirichlet(self, p):
         """Dilichlet boundary condition
         """
@@ -78,7 +185,7 @@ class LShapeRSinData:
             [-1, -1, 1],
             [1, -1, 1],
             [1, 1, 1],
-            [-1, 1, 1]], dtype=np.float)
+            [-1, 1, 1]], dtype=np.float64)
 
         cell = np.array([
             [0, 1, 2, 6],
@@ -86,7 +193,7 @@ class LShapeRSinData:
             [0, 4, 5, 6],
             [0, 7, 4, 6],
             [0, 3, 7, 6],
-            [0, 2, 3, 6]], dtype=np.int)
+            [0, 2, 3, 6]], dtype=np.int_)
         mesh = TetrahedronMesh(node, cell)
         for i in range(n):
             mesh.bisect()
@@ -105,9 +212,11 @@ class LShapeRSinData:
         idxMap[isValidNode] = range(isValidNode.sum())
         cell = idxMap[cell]
         mesh = TetrahedronMesh(node, cell)
+        mesh.label() # 标记最长边
 
         return mesh
 
+    @cartesian
     def solution(self, p):
         """ the exact solution
         """
@@ -120,6 +229,7 @@ class LShapeRSinData:
         u = r**(2/3)*np.sin(2*theta/3)
         return u
 
+    @cartesian
     def gradient(self, p):
         """ The gradient of the exact solution
         """
@@ -144,10 +254,12 @@ class LShapeRSinData:
                 )
         return val
 
+    @cartesian
     def source(self, p):
         val = np.zeros(p.shape[:-1], dtype=p.dtype)
         return val
 
+    @cartesian
     def dirichlet(self, p):
         """Dilichlet boundary condition
         """

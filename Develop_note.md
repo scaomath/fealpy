@@ -1,5 +1,17 @@
 # Developing Standard 
 
+## 发布新版本步骤
+1. 修改如下文件中的 tag 版本号：
+.bumpversion.cfg
+fealpy/__init__.py
+2. add and commit
+3. 创建相应版本号的 tag
+4. git push github --tags
+5. github 页面 realease
+
+
+
+
 ## General Python Coding Rule
 
 * ClassName
@@ -57,6 +69,14 @@ The name rules of the number of entity:
 * TD: the Toplogy Dimension 
 * NFV: the Number of Face Vertices 
 * NCV: the Number of Cell Vertices 
+
+# c: 单元指标
+# f: 面指标
+# e: 边指标
+# v: 顶点个数指标
+# i, j, k, d: 自由度或基函数指标
+# q: 积分点或重心坐标点指标
+# m, n: 空间或拓扑维数指标
 
 
 The basic member data in a mesh:
@@ -144,3 +164,13 @@ The member function in a `FunctionSpace`:
 * value(u, bc, cellidx=None)
 * grad_value(u, bc, cellidx=None)
 * div_value(u, bc, cellidx=None)
+
+## 指标循环约定 
+
+ c: 单元指标
+ f: 面指标
+ e: 边指标
+ v: 顶点个数指标
+ i, j, k, d: 自由度或基函数指标
+ q: 积分点或重心坐标点指标
+ m, n: 空间或拓扑维数指标

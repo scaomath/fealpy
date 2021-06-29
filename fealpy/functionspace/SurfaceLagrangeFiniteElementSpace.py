@@ -6,7 +6,7 @@ from ..mesh import SurfaceTriangleMesh
 from ..quadrature.FEMeshIntegralAlg import FEMeshIntegralAlg
 
 from .femdof import CPLFEMDof2d, DPLFEMDof2d
-from .function import Function
+from .Function import Function
 
 
 class SurfaceLagrangeFiniteElementSpace:
@@ -41,7 +41,8 @@ class SurfaceLagrangeFiniteElementSpace:
 
         self.scale = scale
         self.p = p
-        self.mesh = SurfaceTriangleMesh(mesh, surface, p=p0, scale=scale)
+
+        self.mesh = SurfaceTriangleMesh(mesh, surface, p=p0, scale=self.scale)
         self.surface = surface
 
         self.cellmeasure = self.mesh.entity_measure('cell')
@@ -124,13 +125,18 @@ class SurfaceLagrangeFiniteElementSpace:
         M = csr_matrix((M.flat, (I.flat, J.flat)), shape=(gdof, gdof))
         return M
 
-    def source_vector(self, f):
+    def source_vector(self, f, barycenter=False):
         p = self.p
+        # bcs : (NQ, 3)
+        # ws : (NQ, )
         bcs, ws = self.integrator.get_quadrature_points_and_weights()
-        pp = self.mesh.bc_to_point(bcs)
-        fval = f(pp)
+        if barycenter:
+            fval = f(bcs)
+        else:
+            pp = self.mesh.bc_to_point(bcs)
+            fval = f(pp)
         phi = self.basis(bcs)
-        bb = np.einsum('i, ik, i..., k->k...', ws, fval, phi, self.cellmeasure)
+        bb = np.einsum('m, mi, mik, i->ik', ws, fval, phi, self.cellmeasure)
         cell2dof = self.dof.cell2dof
         gdof = self.number_of_global_dofs()
         b = np.bincount(cell2dof.flat, weights=bb.flat, minlength=gdof)
@@ -142,7 +148,7 @@ class SurfaceLagrangeFiniteElementSpace:
         """
         return self.mesh.space.basis(bc)
 
-    def grad_basis(self, bc, index=None, returncond=False):
+    def grad_basis(self, bc, index=np.s_[:], returncond=False):
         """
         Compute the gradients of all basis functions at a given barrycenter.
         """
@@ -181,7 +187,7 @@ class SurfaceLagrangeFiniteElementSpace:
             val = np.einsum(s1, phi, uh[cell2dof[index]])
         return val
 
-    def grad_value(self, uh, bc, index=None):
+    def grad_value(self, uh, bc, index=np.s_[:]):
         gphi = self.grad_basis(bc, index=index)
         cell2dof = self.cell_to_dof()
         dim = len(uh.shape) - 1
@@ -256,3 +262,10 @@ class SurfaceLagrangeFiniteElementSpace:
             uh = self.function()
             uh[cell2dof] = data[:, [0, 5, 4, 1, 3, 2]]
             return uh
+
+    def set_dirichlet_bc(self, uh, gD, threshold=None, q=None):
+        """
+        初始化解 uh  的第一类边界条件。
+        """
+        pass
+

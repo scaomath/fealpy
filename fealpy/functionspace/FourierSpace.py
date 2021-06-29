@@ -1,8 +1,11 @@
 import numpy as np
 from numpy.linalg import inv
 
+import scipy.fftpack as spfft
+import pyfftw
+
 class FourierSpace:
-    def __init__(self, box, N):
+    def __init__(self, box, N, dft=None):
         self.box = box
         self.N = N
         self.GD = box.shape[0] 
@@ -10,9 +13,25 @@ class FourierSpace:
         self.ftype = np.float
         self.itype = np.int32
 
+        if dft is None:
+            ncpt = np.array([N,N])
+            a = pyfftw.empty_aligned(ncpt, dtype=np.complex128)
+            self.fftn = pyfftw.builders.fftn(a)
+            b = pyfftw.empty_aligned(ncpt, dtype=np.complex128)
+            self.ifftn = pyfftw.builders.ifftn(b)
+            self.fftfreq = spfft.fftfreq # TODO:change to pyfftw
+            self.fftfreq = pyfftw.interfaces.scipy_fftpack.fftfreq 
+        elif dft == "scipy":
+            self.fftn = spfft.fftn
+            self.ifftn = spfft.ifftn
+            self.fftfreq = spfft.fftfreq
+        else:
+            self.fftn = dft.fftn
+            self.ifftn = dft.ifftn
+            self.fftfreq = dft.fftfreq
+
     def number_of_dofs(self):
         return self.N**self.GD
-
 
     def interpolation_points(self):
         N = self.N
@@ -25,15 +44,42 @@ class FourierSpace:
         return points
 
     def fourier_interpolation(self, data):
-        idx = np.asarray(data[:, :self.GD], dtype=np.int)
+        """
+
+        Parameters
+        ----------
+        data: data[0], data[1]
+        """
+        idx = data[0]
         idx[idx<0] += self.N
-        F = self.function()
-        F[tuple(idx.T)] = data[:, self.GD]
-        return np.fft.ifftn(F).real
+        F = self.function(dtype=data[1].dtype)
+
+        F[tuple(idx.T)] = data[1]
+        Err = self.fftn(F).real-np.fft.fftn(F).real
+        e = np.max(np.abs(Err))
+        return np.fft.fftn(F).real #TODO: check here
+
+    def fourier_interpolation1(self, data):
+        """
+
+        Parameters
+        ----------
+        data: data[0], data[1]
+        """
+        idx = data[0]
+        idx[idx<0] += self.N
+        F = self.function(dtype=data[1].dtype)
+
+        F[tuple(idx.T)] = data[1]
+        Err = self.fftn(F).real-np.fft.fftn(F).real
+        e = np.max(np.abs(Err))
+        #return np.fft.fftn(F).real
+        return self.fftn(F).real
+
+
 
     def function_norm(self, u):
-        dof = self.number_of_dofs()
-        val = np.sqrt(np.sum(np.fft.fftn(u))**2/dof).real
+        val = np.sqrt(np.sum(self.ifftn(u))**2).real
         return val
 
     def interpolation(self, u):
@@ -49,7 +95,7 @@ class FourierSpace:
         GD = self.GD
         box = self.box
 
-        f = np.fft.fftfreq(N)*N
+        f = self.fftfreq(N)*N
         f = np.meshgrid(*(GD*(f,)), sparse=sparse)
         rBox = 2*np.pi*inv(box).T
         n = GD
@@ -71,19 +117,20 @@ class FourierSpace:
         GD = self.GD
         xi = self.reciprocal_lattice()
         F = self.interpolation(f) 
-        F = np.fft.fftn(F)
+        F = self.ifftn(F)
         U = F/cfun(xi)
-        U = np.fft.ifftn(U).real
+        U = self.fftn(U).real
         return U
 
-    def function(self, dim=None):
+    def function(self, dim=None, dtype=None):
+        dtype = self.ftype if dtype is None else dtype
         N = self.N
         GD = self.GD
         box = self.box
         shape = GD*(N, )
         if dim is not None:
             shape = (dim, ) + shape
-        f = np.zeros(shape, dtype=self.ftype)
+        f = np.zeros(shape, dtype=dtype)
         return f
 
     def error(self, u, U):

@@ -2,6 +2,10 @@ import numpy as np
 import operator as op
 from functools import reduce
 
+def multi_index_matrix0d(p):
+    multiIndex = 1
+    return multiIndex 
+
 def multi_index_matrix1d(p):
     ldof = p+1
     multiIndex = np.zeros((ldof, 2), dtype=np.int)
@@ -33,6 +37,8 @@ def multi_index_matrix3d(p):
     multiIndex[:, 0] = p - np.sum(multiIndex[:, 1:], axis=1)
     return multiIndex
 
+multi_index_matrix = [multi_index_matrix0d, multi_index_matrix1d, multi_index_matrix2d, multi_index_matrix3d]
+
 
 class CPLFEMDof1d():
     def __init__(self, mesh, p):
@@ -42,16 +48,41 @@ class CPLFEMDof1d():
         self.cell2dof = self.cell_to_dof()
 
     def boundary_dof(self, threshold=None):
-        node = self.mesh.entity('node')
-        idx = self.mesh.ds.boundary_node_index()
-        if threshold is not None:
-            flag = threshold(node[idx])
-            idx = idx[flag]
+        if type(threshold) is np.ndarray:
+            index = threshold
+        else:
+            index = self.mesh.ds.boundary_node_index()
+            if callable(threshold):
+                bc = self.mesh.entity_barycenter('node', index=index)
+                flag = threshold(bc)
+                index = index[flag]
 
         gdof = self.number_of_global_dofs()
         isBdDof = np.zeros(gdof, dtype=np.bool)
-        isBdDof[idx] = True
+        isBdDof[index] = True
         return isBdDof
+
+    def is_boundary_dof(self, threshold=None):
+        if type(threshold) is np.ndarray:
+            index = threshold
+        else:
+            index = self.mesh.ds.boundary_node_index()
+            if callable(threshold):
+                bc = self.mesh.entity_barycenter('node', index=index)
+                flag = threshold(bc)
+                index = index[flag]
+
+        gdof = self.number_of_global_dofs()
+        isBdDof = np.zeros(gdof, dtype=np.bool)
+        isBdDof[index] = True
+        return isBdDof
+
+    def entity_to_dof(self, etype='cell', index=np.s_[:]):
+        if etype in {'cell', 'face', 'edge', 1}:
+            return self.cell_to_dof()[index]
+        elif etype in {'node', 0}:
+            NN = self.mesh.number_of_nodes()
+            return np.arange(NN)[index]
 
     def cell_to_dof(self):
         p = self.p
@@ -69,8 +100,11 @@ class CPLFEMDof1d():
             cell2dof[:, 1:-1] = NN + np.arange(NC*(p-1)).reshape(NC, p-1)
             return cell2dof
 
-    def number_of_local_dofs(self):
-        return self.p + 1
+    def number_of_local_dofs(self, doftype='cell'):
+        if doftype in {'cell', 1}:
+            return self.p + 1
+        elif doftype in {'face', 'edge', 'node', 0}:
+            return 1
 
     def number_of_global_dofs(self):
         p = self.p
@@ -126,16 +160,47 @@ class CPLFEMDof2d():
         return self.multiIndex == 0
 
     def boundary_dof(self, threshold=None):
-        idx = self.mesh.ds.boundary_edge_index()
-        if threshold is not None:
-            bc = self.mesh.entity_barycenter('face', index=idx)
-            flag = threshold(bc)
-            idx  = idx[flag]
+
+        if type(threshold) is np.ndarray:
+            index = threshold
+        else:
+            index = self.mesh.ds.boundary_edge_index()
+            if callable(threshold):
+                bc = self.mesh.entity_barycenter('edge', index=index)
+                flag = threshold(bc)
+                index = index[flag]
+
         gdof = self.number_of_global_dofs()
         edge2dof = self.edge_to_dof()
         isBdDof = np.zeros(gdof, dtype=np.bool)
-        isBdDof[edge2dof[idx]] = True
+        isBdDof[edge2dof[index]] = True
         return isBdDof
+
+    def is_boundary_dof(self, threshold=None):
+
+        if type(threshold) is np.ndarray:
+            index = threshold
+        else:
+            index = self.mesh.ds.boundary_edge_index()
+            if callable(threshold):
+                bc = self.mesh.entity_barycenter('edge', index=index)
+                flag = threshold(bc)
+                index = index[flag]
+
+        gdof = self.number_of_global_dofs()
+        edge2dof = self.edge_to_dof()
+        isBdDof = np.zeros(gdof, dtype=np.bool)
+        isBdDof[edge2dof[index]] = True
+        return isBdDof
+
+    def entity_to_dof(self, etype='cell', index=np.s_[:]):
+        if etype in {'cell', 2}:
+            return self.cell_to_dof()[index]
+        elif etype in {'face', 'edge', 1}:
+            return self.edge_to_dof()[index]
+        elif etype in {'node', 0}:
+            NN = self.mesh.number_of_nodes()
+            return np.arange(NN)[index]
 
     def face_to_dof(self):
         return self.edge_to_dof()
@@ -157,8 +222,8 @@ class CPLFEMDof2d():
     def cell_to_dof(self):
         p = self.p
         mesh = self.mesh
-        cell = mesh.ds.cell
 
+        cell = mesh.entity('cell')
         N = mesh.number_of_nodes()
         NE = mesh.number_of_edges()
         NC = mesh.number_of_cells()
@@ -242,9 +307,14 @@ class CPLFEMDof2d():
             gdof += (ldof - 3*p)*NC
         return gdof
 
-    def number_of_local_dofs(self):
+    def number_of_local_dofs(self, doftype='cell'):
         p = self.p
-        return (p+1)*(p+2)//2
+        if doftype in {'cell', 2}:
+            return (p+1)*(p+2)//2 
+        elif doftype in {'face', 'edge',  1}:
+            return self.p + 1
+        elif doftype in {'node', 0}:
+            return 1
 
 class CPLFEMDof3d():
     def __init__(self, mesh, p):
@@ -273,6 +343,18 @@ class CPLFEMDof3d():
         ldof = self.number_of_local_dofs()
         isFaceDof = (self.multiIndex == 0)
         return isFaceDof
+
+    def entity_to_dof(self, etype='cell', index=np.s_[:]):
+        if etype in {'cell', 3}:
+            return self.cell_to_dof()[index]
+        elif etype in {'face', 2}:
+            return self.face_to_dof()[index]
+        elif etype in {'edge', 1}:
+            return self.edge_to_dof()[index]
+        elif etype in {'node', 0}:
+            NN = self.mesh.number_of_nodes()
+            return np.arange(NN)[index]
+
 
     def edge_to_dof(self):
         p = self.p
@@ -329,16 +411,37 @@ class CPLFEMDof3d():
         return face2dof
 
     def boundary_dof(self, threshold=None):
-        idx = self.mesh.ds.boundary_face_index()
-        if threshold is not None:
-            bc = self.mesh.entity_barycenter('face', index=idx)
-            flag = threshold(bc)
-            idx = idx[flag]
+
+        if type(threshold) is np.ndarray:
+            index = threshold
+        else:
+            index = self.mesh.ds.boundary_face_index()
+            if callable(threshold):
+                bc = self.mesh.entity_barycenter('face', index=index)
+                flag = threshold(bc)
+                index = index[flag]
 
         face2dof = self.face_to_dof()
         gdof = self.number_of_global_dofs()
         isBdDof = np.zeros(gdof, dtype=np.bool)
-        isBdDof[face2dof[idx]] = True
+        isBdDof[face2dof[index]] = True
+        return isBdDof
+
+    def is_boundary_dof(self, threshold=None):
+
+        if type(threshold) is np.ndarray:
+            index = threshold
+        else:
+            index = self.mesh.ds.boundary_face_index()
+            if callable(threshold):
+                bc = self.mesh.entity_barycenter('face', index=index)
+                flag = threshold(bc)
+                index = index[flag]
+
+        face2dof = self.face_to_dof()
+        gdof = self.number_of_global_dofs()
+        isBdDof = np.zeros(gdof, dtype=np.bool)
+        isBdDof[face2dof[index]] = True
         return isBdDof
 
     def cell_to_dof(self):
@@ -513,10 +616,16 @@ class CPLFEMDof3d():
         return gdof
 
 
-    def number_of_local_dofs(self):
+    def number_of_local_dofs(self, doftype='cell'):
         p = self.p
-        ldof = (p+1)*(p+2)*(p+3)//6
-        return ldof
+        if doftype in {'cell', 3}:
+            return (p+1)*(p+2)*(p+3)//6
+        elif doftype in {'face', 2}:
+            return (p+1)*(p+2)//2
+        elif doftype in {'edge', 1}:
+            return p + 1
+        elif doftype in {'node', 0}:
+            return 1
 
     def interpolation_points(self):
         p = self.p
@@ -751,15 +860,20 @@ class CPPFEMDof3d():
         return gdof
 
     def boundary_dof(self, threshold=None):
-        idx = self.mesh.ds.boundary_face_index()
-        if threshold is not None:
-            bc = self.mesh.entity_barycenter('face', index=idx)
-            flag = threshold(bc)
-            idx  = idx[flag]
+
+        if type(threshold) is np.ndarray:
+            index = threshold
+        else:
+            index = self.mesh.ds.boundary_face_index()
+            if callable(threshold):
+                bc = self.mesh.entity_barycenter('face', index=index)
+                flag = threshold(bc)
+                index = index[flag]
+
         gdof = self.number_of_global_dofs()
         face2dof = self.face_to_dof()
         isBdDof = np.zeros(gdof, dtype=np.bool)
-        isBdDof[np.concatenate(face2dof[idx])] = True
+        isBdDof[np.concatenate(face2dof[index])] = True
         return isBdDof
 
     def face_to_dof(self):

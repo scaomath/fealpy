@@ -73,8 +73,8 @@ class DistMesh2d():
         p = self.mesh.node
         d = fd(p, *args)
         idx = d > 0
-        depsx = np.array([self.deps,0])
-        depsy = np.array([0,self.deps])
+        depsx = np.array([self.deps, 0])
+        depsy = np.array([0, self.deps])
         dgradx = (fd(p[idx, :]+depsx, *args) - d[idx])/self.deps
         dgrady = (fd(p[idx, :]+depsy, *args) - d[idx])/self.deps
         p[idx, 0] = p[idx, 0] - d[idx]*dgradx
@@ -119,7 +119,7 @@ class DistMesh2d():
     def delaunay(self, p):
         fd, *_, args = self.domain.params
         d = Delaunay(p)
-        t = d.simplices
+        t = np.asarray(d.simplices, dtype=np.int_)
         pc = (p[t[:, 0], :]+p[t[:, 1], :]+p[t[:, 2], :])/3
         return  t[fd(pc, *args) < -self.geps, :]
 

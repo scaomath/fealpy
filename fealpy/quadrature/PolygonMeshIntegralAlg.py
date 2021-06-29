@@ -3,18 +3,23 @@ from .GaussLobattoQuadrature import GaussLobattoQuadrature
 from .GaussLegendreQuadrature import GaussLegendreQuadrature
 
 class PolygonMeshIntegralAlg():
-    def __init__(self, pmesh, q, cellmeasure=None, cellbarycenter=None):
-        self.pmesh = pmesh
+    def __init__(self, mesh, q, cellmeasure=None, cellbarycenter=None):
+        self.mesh = mesh
 
-        self.cellmeasure = cellmeasure if cellmeasure is not None \
-                else pmesh.entity_measure('cell')
+        self.integrator = mesh.integrator(q)
+        self.cellintegrator = self.integrator 
         self.cellbarycenter = cellbarycenter if cellbarycenter is not None \
-                else pmesh.entity_barycenter('cell')
-        self.cellintegrator = pmesh.integrator(q)
+                else mesh.entity_barycenter('cell')
+        self.cellmeasure = cellmeasure if cellmeasure is not None \
+                else mesh.entity_measure('cell')
 
-        self.edgemeasure = pmesh.entity_measure('edge')
-        self.edgebarycenter = pmesh.entity_barycenter('edge')
+        self.edgemeasure = mesh.entity_measure('edge')
+        self.edgebarycenter = mesh.entity_barycenter('edge')
         self.edgeintegrator = GaussLegendreQuadrature(q)
+
+        self.facemeasure = self.edgemeasure
+        self.facebarycenter = self.edgebarycenter
+        self.faceintegrator = self.edgeintegrator
 
     def triangle_measure(self, tri):
         v1 = tri[1] - tri[0]
@@ -22,8 +27,14 @@ class PolygonMeshIntegralAlg():
         area = np.cross(v1, v2)/2
         return area
 
-    def edge_integral(self, u, edgetype=False, q=None):
-        mesh = self.pmesh
+    def edge_integral(self, u, edgetype=False, q=None, index=None):
+        """
+        Note:
+
+        edgetype 参数要去掉， 函数名字意味着是逐个实体上的积分
+
+        """
+        mesh = self.mesh
         NE = mesh.number_of_edges()
         node = mesh.entity('node')
         edge = mesh.entity('edge')
@@ -31,25 +42,40 @@ class PolygonMeshIntegralAlg():
         qf = self.edgeintegrator
         bcs, ws = qf.quadpts, qf.weights
 
-        ps = mesh.edge_bc_to_point(bcs)
-        val = u(ps)
+        index = index or np.s_[:]
+        ps = mesh.edge_bc_to_point(bcs, index=index)
+        val = u(ps) # TODO: 这里默认为空间坐标, 是否存在重心坐标的形式?
         if edgetype is True:
-            e = np.einsum('i, ij..., j->j...', ws, val, self.edgemeasure)
+            e = np.einsum('i, ij..., j->j...', ws, val, self.edgemeasure[index])
         else:
-            e = np.einsum('i, ij..., j->...', ws, val, self.edgemeasure)
+            e = np.einsum('i, ij..., j->...', ws, val, self.edgemeasure[index])
         return e
 
+    def face_integral(self, u, facetype=False, q=None, index=None):
+        """
+        TODO:
+            facetype 参数要去掉， 函数名字意味着是逐个实体上的积分
+        """
+        return self.edge_integral(u, facetype, q, index)
+
+    def cell_integral(self, u,  q=None):
+        """
+        TODO:
+            引入 power 参数
+        """
+        return self.integral(u, celltype=True, q=q)
+
     def integral(self, u, celltype=False, q=None):
-        pmesh = self.pmesh
-        node = pmesh.node
+        mesh = self.mesh
+        node = mesh.node
         bc = self.cellbarycenter
 
-        edge = pmesh.entity('edge')
-        edge2cell = pmesh.ds.edge_to_cell()
+        edge = mesh.entity('edge')
+        edge2cell = mesh.ds.edge_to_cell()
 
-        NC = pmesh.number_of_cells()
+        NC = mesh.number_of_cells()
 
-        qf = self.cellintegrator if q is None else self.pmesh.integrator(q)
+        qf = self.cellintegrator if q is None else self.mesh.integrator(q)
         bcs, ws = qf.quadpts, qf.weights
 
         tri = [bc[edge2cell[:, 0]], node[edge[:, 0]], node[edge[:, 1]]]
@@ -58,7 +84,7 @@ class PolygonMeshIntegralAlg():
         val = u(pp, edge2cell[:, 0])
 
         shape = (NC, ) + val.shape[2:]
-        e = np.zeros(shape, dtype=np.float)
+        e = np.zeros(shape, dtype=np.float64)
 
         ee = np.einsum('i, ij..., j->j...', ws, val, a)
         np.add.at(e, edge2cell[:, 0], ee)
@@ -86,20 +112,34 @@ class PolygonMeshIntegralAlg():
             return f(x)
         return self.integral(u, celltype=celltype, q=q)
 
-    def error(self, efun, celltype=False, power=None, q=None):
+    def error(self, u, v, celltype=False, power=2, q=None):
+        """
+
+        Notes
+        -----
+        给定两个函数，计算两个函数的之间的差，默认计算 L2 差（power=2)
+
+        power 的取值可以是任意的 p。
+
+        TODO
+        ----
+        1. 考虑无穷范数的情形
+        """
+        def efun(x, index):
+            return np.abs(u(x) - v(x, index))**power
+
         e = self.integral(efun, celltype=celltype, q=q)
         if isinstance(e, np.ndarray):
             n = len(e.shape) - 1
             if n > 0:
                 for i in range(n):
                     e = e.sum(axis=-1)
-        if celltype is False:
-            e = e.sum()
 
-        if power is not None:
-            return power(e)
+        if celltype == False:
+            e = np.power(np.sum(e), 1/power)
         else:
-            return e
+            e = np.power(np.sum(e, axis=tuple(range(1, len(e.shape)))), 1/power)
+        return e
 
     def L1_error(self, u, uh, celltype=False, q=None):
         def f(x, index):
@@ -122,8 +162,22 @@ class PolygonMeshIntegralAlg():
 
         return np.sqrt(e)
 
+    def L2_error_1(self, u, uh, celltype=False, q=None):
+        def f(x, index):
+            return (u(x, index) - uh(x, index))**2
+        e = self.integral(f, celltype=celltype, q=q)
+        if isinstance(e, np.ndarray):
+            n = len(e.shape) - 1
+            if n > 0:
+                for i in range(n):
+                    e = e.sum(axis=-1)
+        if celltype is False:
+            e = e.sum()
+
+        return np.sqrt(e)
+
     def edge_L2_error(self, u, uh, celltype=False, q=None):
-        mesh = self.pmesh
+        mesh = self.mesh
         NE = mesh.number_of_edges()
         node = mesh.entity('node')
         edge = mesh.entity('edge')

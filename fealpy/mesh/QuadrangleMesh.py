@@ -7,9 +7,14 @@ from ..common import hash2map
 class QuadrangleMeshDataStructure(Mesh2dDataStructure):
     localEdge = np.array([(0, 1), (1, 2), (2, 3), (3, 0)])
     ccw = np.array([0, 1, 2, 3])
-    V = 4
-    E = 4
-    F = 1
+
+    NVE = 2
+    NVF = 2
+    NVC = 4
+
+    NEC = 4
+    NFC = 4
+
     localCell = np.array([
         (0, 1, 2, 3),
         (1, 2, 3, 0),
@@ -22,11 +27,13 @@ class QuadrangleMeshDataStructure(Mesh2dDataStructure):
 
 class QuadrangleMesh(Mesh2d):
     def __init__(self, node, cell):
+        assert cell.shape[-1] == 4
         self.node = node
         NN = node.shape[0]
         self.ds = QuadrangleMeshDataStructure(NN, cell)
 
         self.meshtype = 'quad'
+        self.p = 1 # 最低次的四边形 
 
         self.itype = cell.dtype
         self.ftype = node.dtype
@@ -35,6 +42,9 @@ class QuadrangleMesh(Mesh2d):
         self.nodedata = {}
         self.edgedata = {}
 
+    def number_of_corner_nodes(self):
+        return self.ds.NN
+
     def reorder_cell(self, idx):
         NC = self.number_of_cells()
         NN = self.number_of_nodes()
@@ -42,14 +52,16 @@ class QuadrangleMesh(Mesh2d):
         cell = cell[np.arange(NC).reshape(-1, 1), self.ds.localCell[idx]]
         self.ds.reinit(NN, cell)
 
-    def integrator(self, k):
-        return QuadrangleQuadrature(k)
+    def integrator(self, k, etype='cell'):
+        if etype in {'cell', 2}:
+            return QuadrangleQuadrature(k)
+        elif etype in {'edge', 'face', 1}:
+            return GaussLegendreQuadrature(k)
 
-
-    def area(self, index=None):
+    def area(self, index=np.s_[:]):
         return self.cell_area(index=index)
 
-    def cell_area(self, index=None):
+    def cell_area(self, index=np.s_[:]):
         NC = self.number_of_cells()
         node = self.entity('node')
         edge = self.entity('edge')

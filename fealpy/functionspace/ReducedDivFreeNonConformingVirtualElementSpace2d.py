@@ -3,7 +3,7 @@ from numpy.linalg import inv
 from scipy.sparse import bmat, coo_matrix, csc_matrix, csr_matrix, spdiags, eye
 import scipy.io as sio
 
-from .function import Function
+from .Function import Function
 from .ScaledMonomialSpace2d import ScaledMonomialSpace2d
 from ..quadrature import GaussLegendreQuadrature
 from ..quadrature import PolygonMeshIntegralAlg
@@ -83,7 +83,7 @@ class RDFNCVEMDof2d():
 
 
 class ReducedDivFreeNonConformingVirtualElementSpace2d:
-    def __init__(self, mesh, p, q=None):
+    def __init__(self, mesh, p=2, q=None):
         """
         Parameter
         ---------
@@ -127,7 +127,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
                 u0, edgetype=True)/eh[:, None, None]
         uh[0:2*NE*p] = uh0.reshape(-1, 2).T.flat
         if p > 2:
-            idx = self.smspace.index1(p=p-2) # 一次求导后的非零基函数编号及求导系数
+            idx = self.smspace.diff_index_1(p=p-2) # 一次求导后的非零基函数编号及求导系数
             x = idx['x']
             y = idx['y']
             def u1(x, index):
@@ -138,6 +138,108 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
             uh[2*NE*p:] += uh1[:, y[0], 0].flat
             uh[2*NE*p:] -= uh1[:, x[0], 1].flat
         return uh
+
+    def project_to_complete_space(self, f, uh, ph, cuh, cph):
+        """
+
+        Parameters
+        ----------
+        uh : 
+        cuh : 
+
+        Notes
+        -----
+            把缩减虚单元空间中的函数投影回完全的虚单元空间, 其中边界和梯度正交空
+        间的自由度直接设置, 但梯度空间的自由度要重新计算.
+        """
+        p = self.p
+        mesh = self.mesh
+        NE = mesh.number_of_edges()
+        NC = mesh.number_of_cells()
+        ch = self.smspace.cellsize # 单元尺寸 
+
+        cell2dof = self.dof.cell2dof # 这里只是边上的标量自由度管理
+        cell2dofLocation = self.dof.cell2dofLocation
+
+        idof = p*(p-1)
+        idof0 = (p+1)*p//2 - 1 # G_{k-2}^\nabla 梯度空间对应的自由度个数
+
+        c2d = cuh.space.cell_to_dof(doftype='cell') # 完全向量虚单元空间单元内部自由度全局编号
+        cuh[:2*NE*p] = uh[:2*NE*p] # 边上自由度直接赋值 
+
+        # 下面代码 cuh[c2d[:, idof0:]] 返回的是 copy 
+        # cuh[c2d[:, idof0:]].flat[:] = uh[2*NE*p:] # 这里是 Bug
+        if p > 2:
+            cuh[c2d[:, idof0:]] = uh[2*NE*p:].reshape(-1, idof-idof0)  # 单元内部梯度正交空间对应的自由度全局编号
+
+        # 下面处理梯度空间对应虚单元自由度
+        n = mesh.edge_unit_normal()
+        eh = mesh.entity_measure('edge')
+        edge2cell = mesh.ds.edge_to_cell()
+        isBdEdge = (edge2cell[:, 0] == edge2cell[:, 1])
+
+        area = self.smspace.cellmeasure # 单元面积
+        Q0 = self.CM[:, 0, 1:idof0+1]/area[:, None]
+
+        qf = GaussLegendreQuadrature(p + 3)
+        bcs, ws = qf.get_quadrature_points_and_weights()
+        ps = mesh.edge_bc_to_point(bcs) 
+        phi = self.smspace.edge_basis(ps, p=p-1)
+
+
+        # left element
+        phi0 = self.smspace.basis(ps, index=edge2cell[:, 0], p=p-1)[..., 1:idof0+1]
+        phi0 -= Q0[None, edge2cell[:, 0]]
+        h = 1/ch[edge2cell[:, 0]]
+        h *= eh # 积分的尺度
+        h *= eh # 自由定义的尺度
+        F = np.einsum('i, ijm, ijn, j->jmn', ws, phi0, phi, h)
+        F = F@self.H1
+
+        edge2dof = self.dof.edge_to_dof()
+        val = np.einsum('jmn, jn, j->jm', F, uh[edge2dof], n[:, 0])
+        np.add.at(cuh, c2d[edge2cell[:, 0], :idof0], val)
+        val = np.einsum('jmn, jn, j->jm', F, uh[NE*p:][edge2dof], n[:, 1])
+        np.add.at(cuh, c2d[edge2cell[:, 0], :idof0], val)
+
+        # right element
+        phi0 = self.smspace.basis(ps, index=edge2cell[:, 1], p=p-1)[..., 1:idof0+1]
+        phi0 -= Q0[None, edge2cell[:, 1]]
+        h = 1/ch[edge2cell[:, 1]]
+        h *= eh
+        h *= eh
+        F = np.einsum('i, ijm, ijn, j->jmn', ws, phi0, phi, h)
+        F = F@self.H1
+        F[isBdEdge] = 0.0 # 注意边界边的右边单元的贡献要设为 0
+
+        val = np.einsum('jmn, jn, j->jm', F, uh[edge2dof], n[:, 0])
+        np.subtract.at(cuh, c2d[edge2cell[:, 1], :idof0], val)
+        val = np.einsum('jmn, jn, j->jm', F, uh[NE*p:][edge2dof], n[:, 1])
+        np.subtract.at(cuh, c2d[edge2cell[:, 1], :idof0], val)
+
+
+        A = cuh.space.stiff_matrix(celltype=True)
+        F = cuh.space.cell_grad_source_vector(f) # (NC, ldof0)
+        c2d = cuh.space.cell_to_dof(doftype='cell')
+
+        cell2dof = self.dof.cell2dof
+        cell2dofLocation = self.dof.cell2dofLocation
+
+        val = cph.reshape((NC, (p+1)*p//2))
+
+        def f0(i):
+            n = cell2dofLocation[i+1] - cell2dofLocation[i]
+            s = slice(cell2dofLocation[i], cell2dofLocation[i+1])
+            x = np.r_['0', cuh[cell2dof[s]], cuh[NE*p:][cell2dof[s]], cuh[c2d[i, :]]] 
+            val[i, 1:] = A[i][2*n:2*n+idof0, :]@x 
+            val[i, 1:] -= F[i]
+            val[i, 1:] /= ch[i]
+            val[i, 0] = ph[i]  
+            val[i, 0] -= sum(val[i, 1:]*Q0[i, :])
+
+        list(map(f0, range(NC)))
+
+
 
     def project_to_smspace(self, uh):
         p = self.p
@@ -232,7 +334,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
             cell2dofLocation = self.dof.cell2dofLocation # 边上的标量的自由度信息
             CM = self.CM
 
-            idx = self.smspace.index1(p=p-2)
+            idx = self.smspace.diff_index_1(p=p-2)
             x = idx['x']
             y = idx['y']
             Q = CM[:, x[0][:, None], x[0]] + CM[:, y[0][:, None], y[0]]
@@ -268,7 +370,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
         G01 = np.zeros((NC, smldof, smldof), dtype=self.ftype)
         G11 = np.zeros((NC, smldof, smldof), dtype=self.ftype)
 
-        idx = self.smspace.index1()
+        idx = self.smspace.diff_index_1()
         x = idx['x']
         y = idx['y']
         L = x[1][None, ...]/ch[..., None]
@@ -423,7 +525,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
         F0 = F0@self.H1
         # F0 /= c[:, None, None] here is a bug
 
-        idx = self.smspace.index1(p=p-1)
+        idx = self.smspace.diff_index_1(p=p-1)
         x = idx['x']
         y = idx['y']
         idx0 = cell2dofLocation[edge2cell[:, [0]]] + edge2cell[:, [2]]*p + np.arange(p)
@@ -463,7 +565,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
         E02 = np.zeros((NC, smldof, idof), dtype=self.ftype) # 单元内部自由度
         E12 = np.zeros((NC, smldof, idof), dtype=self.ftype) 
         if p > 2: # idof > 0
-            idx = self.smspace.index1(p=p-2)
+            idx = self.smspace.diff_index_1(p=p-2)
             x = idx['x']
             y = idx['y']
             I = np.arange(idof)
@@ -505,7 +607,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
         R11 = np.zeros((smldof, len(cell2dof)), dtype=self.ftype)
         R12 = np.zeros((NC, smldof, idof), dtype=self.ftype)
 
-        idx = self.smspace.index2()
+        idx = self.smspace.diff_index_2()
         xx = idx['xx']
         yy = idx['yy']
         xy = idx['xy']
@@ -561,7 +663,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
         # F0: (NE, ndof, p)
         F0 = F0@self.H1
 
-        idx = self.smspace.index1() # 一次求导后的非零基函数编号及求导系数
+        idx = self.smspace.diff_index_1() # 一次求导后的非零基函数编号及求导系数
         x = idx['x']
         y = idx['y']
         # idx0: (NE, p)
@@ -724,7 +826,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
             np.add.at(D0, (idx[isInEdge], np.s_[:]), F1[isInEdge])
 
         if p > 2:
-            idx = self.smspace.index1(p=p-2) # 一次求导后的非零基函数编号及求导系数
+            idx = self.smspace.diff_index_1(p=p-2) # 一次求导后的非零基函数编号及求导系数
             x = idx['x']
             y = idx['y']
             D1 =  CM[:, y[0], :]/area[:, None, None] # check here
@@ -760,7 +862,7 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
         U21 = np.zeros((smldof, len(cell2dof)), dtype=self.ftype)
         U22 = np.zeros((NC, smldof, idof), dtype=self.ftype)
 
-        idx = self.smspace.index1(p=p-1) # 一次求导后的非零基函数编号及求导系数
+        idx = self.smspace.diff_index_1(p=p-1) # 一次求导后的非零基函数编号及求导系数
         x = idx['x']
         y = idx['y']
         ch = self.smspace.cellsize # 单元尺寸 
@@ -820,7 +922,9 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
         return [[U00, U01, U02], [U10, U11, U12], [U20, U21, U22]]
 
     def matrix_A(self):
+        return self.stiff_matrix()
 
+    def stiff_matrix(self):
         p = self.p # 空间次数
         cell2dof = self.dof.cell2dof
         cell2dofLocation = self.dof.cell2dofLocation
@@ -882,6 +986,9 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
         return  A
 
     def matrix_P(self):
+        return self.div_matrix()
+
+    def div_matrix(self):
         """
         Notes
         -----
@@ -976,28 +1083,199 @@ class ReducedDivFreeNonConformingVirtualElementSpace2d:
             b[c2d] += np.sum(bb[:, :, [1]]*self.E[1][2], axis=1)
             return b 
 
-    def set_dirichlet_bc(self, gh, g, is_dirichlet_edge=None):
+    def to_rtspace(self, uh0, uh1, q=None):
+
+        NE = self.mesh.number_of_edges()
+        NC = self.mesh.number_of_cells()
+        p = self.p
+        space0 = self
+        space1 = uh1.space
+        A = self.interpolation_RT(space1, q=q)
+
+        ldof0 = space0.number_of_local_dofs()[0]
+        c2d0 = np.zeros((NC, ldof0), dtype=self.itype)
+        c2d, cell2dofLocation = space0.cell_to_dof()
+
+        c2d0[:, 0:3*p] = c2d.reshape(-1, 3*p)
+        c2d0[:, 3*p:6*p] = c2d0[:, 0:3*p] + NE*p
+        c2d0[:, 6*p:] = space0.cell_to_dof('cell') 
+
+        c2d1 = space1.cell_to_dof()
+        uh1[c2d1] = np.einsum('cij, cj->ci', A, uh0[c2d0])
+
+
+    def interpolation_RT(self, space, q=None):
         """
+
+        Notes
+        -----
+        把 Reduced 虚单元空间的中基函数插值到 RT_{k-1} 空间中.
+
+        这里假设所用的多边形网格是三角形网格, 
+
+        给定一个三角形网格, 转化为多边形网格, 转化时要注意三角形的第 0
+        条边, 转化为多边形网格的第 0 条边.
+
+        self 是 Reduced 虚单元的空间
+        space 是 RT 空间的 space
+     
+        """
+
+        p = self.p 
+        mesh = space.mesh # 多边形网格
+        GD = mesh.geo_dimension() # GD == 2
+        NE = mesh.number_of_edges()
+        NC = mesh.number_of_cells()
+
+        edge = mesh.entity('edge')
+        edge2cell = mesh.ds.edge_to_cell()
+        isInEdge = (edge2cell[:, 0] != edge2cell[:, 1])
+
+        en = mesh.edge_unit_normal() # 每条边的单位法向(NE, 2)
+        eh = self.mesh.entity_measure('edge') # 每条边的长度 (NE, )
+
+
+        # RT_{k-1} 空间在单元 K 上局部自由度的个数, TODO：确认是 k-1 还是 k
+        ldof0 = space.number_of_local_dofs(doftype='all') 
+        print('ldof', ldof0)
+
+        
+        # 每个单元 K 上的插值矩阵
+        A = np.zeros((NC, ldof0, ldof0), dtype=self.ftype)
+
+        # 三角形网格边上的积分公式
+        qf = space.integralalg.edgeintegrator if q is None else mesh.integrator(q, 'edge')
+        bcs, ws = qf.get_quadrature_points_and_weights()
+        ps = mesh.bc_to_point(bcs)
+
+        # 网格边上的缩放单项式空间的基函数 (NQ, NE, p)
+        ephi = self.smspace.edge_basis(ps, p=p-1)
+
+        # 计算左边单元基函数在当前边上积分点处的函数值, (NQ, NE, ldof0, 2)
+        phi = space.basis(ps, index=edge2cell[:, 0], barycentric=False) 
+        idx0 = edge2cell[:, 0][:, None]
+        idx1 = edge2cell[:, 2][:, None]*p + np.arange(p)
+        # (NE, p, ldof0)
+        A[idx0, idx1] = np.einsum('q, qei, em, qejm, e->eij', ws, ephi, en, phi, eh)  
+
+        # 计算右边单元基函数在当前边上积分点处的函数值, (NQ, NE, ldof0, 2)
+        phi = space.basis(ps, index=edge2cell[:, 1], barycentric=False) 
+        idx0 = edge2cell[:, 1][:, None]
+        idx1 = edge2cell[:, 3][:, None]*p + np.arange(p)
+        # (NE, p, ldof0)
+        A[idx0, idx1] = np.einsum('q, qei, ed, qejd, e->eij', ws, ephi, en, phi, eh)  
+
+        # 三角形网格单元上的积分公式
+        cellmeasure = mesh.entity_measure('cell')
+        qf = space.integralalg.cellintegrator if q is None else mesh.integrator(q, 'cell')
+        bcs, ws = qf.get_quadrature_points_and_weights()
+        ps = mesh.bc_to_point(bcs)
+        phi0 = space.basis(bcs) # (NQ, NC, ldof0, GD)
+        phi1 = self.smspace.basis(ps, p=p-2) # (NQ, NC, ldof1)
+        val = np.einsum('q, qci, qcjm, c->cmij', ws, phi1, phi0, cellmeasure)
+        ldof = self.smspace.number_of_local_dofs(p=p-2, doftype='cell')
+        start = 3*p
+        stop = start + ldof
+        A[:, start:stop, :] = val[:, 0]
+        start = stop
+        stop += ldof
+        A[:, start:stop, :] = val[:, 1]
+
+        # Reduced 虚单元空间在单元  K 上局部自由度的个数
+        ldof1 = self.number_of_local_dofs()[0]
+        print('ldof1', ldof1)
+        # 每个单元 K 上的右端矩阵
+        F = np.zeros((NC, ldof0, ldof1), dtype=self.ftype) 
+        idx0 = edge2cell[:, [2]]*p + np.arange(p)
+        F[edge2cell[:, 0][:, None], idx0, idx0] = (en[:, 0]*eh)[:, None]
+        idx1 = 3*p + idx0
+        F[edge2cell[:, 0][:, None], idx0, idx1] = (en[:, 1]*eh)[:, None] 
+
+        idx0 = edge2cell[:, [3]]*p + np.arange(p)
+        F[edge2cell[:, 1][:, None], idx0, idx0] = (en[:, 0]*eh)[:, None]
+        idx1 = 3*p + idx0
+        F[edge2cell[:, 1][:, None], idx0, idx1] = (en[:, 1]*eh)[:, None]
+        
+        E = self.E
+        E00 = np.hsplit(E[0][0], NC)
+        E01 = np.hsplit(E[0][1], NC)
+        E02 = E[0][2]
+        E10 = np.hsplit(E[1][0], NC)
+        E11 = np.hsplit(E[1][1], NC)
+        E12 = E[1][2]
+
+        smldof = self.smspace.number_of_local_dofs(p=p-2) # 标量 p-2 次单元缩放空间的维数
+        start = 3*p
+        stop = start + smldof
+        F[:, start:stop, 0*p:3*p] = E00
+        F[:, start:stop, 3*p:6*p] = E01
+        F[:, start:stop, 6*p:] = E02
+
+        start = stop
+        stop += smldof
+        F[:, start:stop, 0*p:3*p] = E10
+        F[:, start:stop, 3*p:6*p] = E11
+        F[:, start:stop, 6*p:] = E12
+
+        return inv(A)@F 
+
+    def pressure_robust_source_vector(self, f, space, q=None):
+        """
+
+        Note
+        ----
+        假设网格是三角形网格, 把缩减虚单元空间的基函数投影到 RT_{k-1} 空间
+
+        space 是 k-1 次的 RT 空间的 space
+        """
+        p = self.p
+        NE = self.mesh.number_of_edges()
+        NC = self.mesh.number_of_cells()
+
+        ldof0 = space.number_of_local_dofs(doftype='all')  
+        ldof1 = self.number_of_local_dofs()[0] # 因为假设是三角形, 所有单元自由度个数是相同的
+        # 插值矩阵 I.shape == (NC, ldof0, ldof1)
+        I = self.interpolation_RT(space, q=q)
+
+        # 向量函数 f 在 RT 空间中的离散, (NC, ldof0)
+        # celltype = True, 表示只计算每个单元上的右端
+        bb = space.source_vector(f, celltype=True, q=q)
+        bb = (bb[:, None, :]@I).reshape(NC, -1)
+
+        gdof = self.number_of_global_dofs()
+        b = np.zeros((gdof, ), dtype=self.ftype)
+
+        cell2dof = self.dof.cell2dof # 边上的自由度
+        np.add.at(b, cell2dof, bb[:, 0:3*p].flat)
+        np.add.at(b[NE*p:], cell2dof, bb[:, 3*p:6*p].flat)
+
+        c2d = self.cell_to_dof('cell')
+        b[c2d] += bb[:, 6*p:]
+
+        return b
+
+    def set_dirichlet_bc(self, uh, gd, is_dirichlet_edge=None):
+        """
+        
         """
         p = self.p
         mesh = self.mesh
 
         NE = mesh.number_of_edges()
 
-        h = mesh.entity_measure('edge')
         isBdEdge = mesh.ds.boundary_edge_flag()
         edge2dof = self.dof.edge_to_dof()
 
         qf = GaussLegendreQuadrature(p + 3)
         bcs, ws = qf.quadpts, qf.weights
         ps = mesh.edge_bc_to_point(bcs, index=isBdEdge)
-        val = g(ps)
+        val = gd(ps)
 
         ephi = self.smspace.edge_basis(ps, index=isBdEdge, p=p-1)
-        b = np.einsum('i, ij..., ijk, j->jk...', ws, val, ephi, h[isBdEdge])
-        T = self.H1[isBdEdge]@b
-        gh[edge2dof[isBdEdge]] = T[:, :, 0] 
-        gh[NE*p:][edge2dof[isBdEdge]] = T[:, :, 1] 
+        b = np.einsum('i, ij..., ijk->jk...', ws, val, ephi)
+        # T = self.H1[isBdEdge]@b #TODO: 检查这里的问题
+        uh[edge2dof[isBdEdge]] = b[:, :, 0] 
+        uh[NE*p:][edge2dof[isBdEdge]] = b[:, :, 1] 
 
     def number_of_global_dofs(self):
         mesh = self.mesh

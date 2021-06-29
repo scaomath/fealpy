@@ -1,13 +1,15 @@
 import numpy as np
 
 class ParabolicFourierSolver():
-    def __init__(self, space, timeline):
+    def __init__(self, space, timeline, plan=None):
         self.space = space 
+        self.plan = plan
         self.k, self.k2 = self.space.reciprocal_lattice(return_square=True)
         self.timeline = timeline 
         dt = self.timeline.current_time_step_length()
         self.E1 = np.exp(-dt*self.k2)
         self.E3 = np.exp(-dt/2*self.k2)
+
 
     def initialize(self, q, w):
         """
@@ -21,6 +23,7 @@ class ParabolicFourierSolver():
         ----
         """
 
+        space = self.space
         self.w = w
         dt = self.timeline.current_time_step_length()
         self.E0 = np.exp(-dt/2*w)
@@ -36,32 +39,69 @@ class ParabolicFourierSolver():
 
         for i in range(1, 4):
             q0 = q[i-1]
-            q1 = np.fft.fftn(E0*q0)
+            q1 = space.ifftn(E0*q0)
             q1 *= E1
-            q[i] = np.fft.ifftn(q1).real
+            q[i] = space.fftn(q1).real
             q[i] *= E0
 
-        q0 = q[0]
         for i in range(1, 4):
-            q1 = np.fft.fftn(E2*q0)
+            q0 = q[i-1]
+            q1 = space.ifftn(E2*q0)
             q1 *= E3
-            q1 = np.fft.ifftn(q1).real
+            q1 = space.fftn(q1).real
             q1 *= E2
 
-            q1 = np.fft.fftn(E2*q1)
+            q1 = space.ifftn(E2*q1)
             q1 *= E3
-            q1 = np.fft.ifftn(q1).real
+            q1 = space.fftn(q1).real
             q1 *= E2
             q[i] *= -1/3
             q[i] += 4*q1/3
+            
+    def operator_split_2(self, q, w, dt):
+        """
 
-    def solve(self, q): 
-        NL = self.timeline.number_of_time_levels()
-        dt = self.timeline.current_time_step_length()
+        Parameters
+        ----------
+
+        References
+        ----------
+
+        Notes
+        -----
+
+        """
+        space = self.space
+        self.w = w
+        self.E1 = np.exp(-dt*self.k2)
+        self.E0 = np.exp(-dt/2*w)
+
         E0 = self.E0
         E1 = self.E1
-        w = self.w
+
+        q1 = space.ifftn(E0*q)
+        q1 *= E1
+        q = space.fftn(q1).real
+        q *= E0
+        return q
+    
+
+    def solve(self, q, w, method='BDF4'):
+        if method == 'BDF4':
+            self.BDF4(q, w)
+    
+    # BDF4 sover 模块
+    def BDF4(self, q, w):
+        space = self.space
+        NL = self.timeline.number_of_time_levels()
+        dt = self.timeline.current_time_step_length()
         k2 = self.k2
+        for i in range(1,4):
+            q0 = q[i-1]
+            q1 = self.operator_split_2(q0, w, dt)
+            qhalf = self.operator_split_2(q0, w, 0.5*dt)
+            qhalf = self.operator_split_2(qhalf, w, 0.5*dt)
+            q[i] = -1/3*q1 + 4/3*qhalf
 
         for i in range(4, NL):
             q0 = 4*q[i-1] - 3*q[i-2] + 4*q[i-3]/3 - q[i-4]/4
@@ -69,22 +109,7 @@ class ParabolicFourierSolver():
             q1 *= w
             q1 *= dt
             q0 -= q1
-            q1 = np.fft.fftn(q0)
+
+            q1 = space.ifftn(q0)
             q1 /= 25/12 + dt*k2
-            q[i] = np.fft.ifftn(q1).real
-
-
-if __name__ == "__main__":
-    from fealpy.functionspace import FourierSpace
-    from fealpy.timeintegratoralg.timeline_new import UniformTimeLine
-
-    box = np.diag(2*[6*np.pi])
-    timeline = UniformTimeLine(0, 0.3, 0.01)
-    space = FourierSpace(box, 16)
-    solver = ParabolicFourierSolver(space, timeline)
-    NL = timelines.number_of_time_levels()
-    q = space.function(dim=NL) 
-    w = 0
-    solver.initialize(q, w)
-    solver.solve(q)
-
+            q[i] = space.fftn(q1).real

@@ -19,12 +19,14 @@ class HexahedronMeshDataStructure(Mesh3dDataStructure):
         (3,  2, 1, 0), (8, 9, 10, 11),
         (4, 11, 7, 3), (1, 6,  9,  5),
         (0,  5, 8, 4), (2, 7, 10,  6)])
-    V = 8
-    E = 12
-    F = 6
+    NVC = 8
+    NEC = 12
+    NFC = 6
+    NVF = 4
+    NEF = 4
 
-    def __init__(self, N, cell):
-        super(HexahedronMeshDataStructure, self).__init__(N, cell)
+    def __init__(self, NN, cell):
+        super(HexahedronMeshDataStructure, self).__init__(NN, cell)
 
         
     def face_to_edge_sign(self):
@@ -39,8 +41,8 @@ class HexahedronMesh(Mesh3d):
 
     def __init__(self, node, cell):
         self.node = node
-        N = node.shape[0]
-        self.ds = HexahedronMeshDataStructure(N, cell)
+        NN = node.shape[0]
+        self.ds = HexahedronMeshDataStructure(NN, cell)
 
         self.meshtype = 'hex'
 

@@ -2,7 +2,7 @@ import numpy as np
 from numpy.linalg import inv
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, spdiags, eye
 
-from .function import Function
+from .Function import Function
 from ..quadrature import GaussLobattoQuadrature
 from ..quadrature import GaussLegendreQuadrature
 from ..quadrature import PolygonMeshIntegralAlg
@@ -220,6 +220,123 @@ class ConformingVirtualElementSpace2d():
         uh /=ws.reshape(-1, 1)
         return uh
 
+    def recovery_estimate(self, uh, pde, method='simple', residual=True,
+            returnsup=False):
+        """
+        estimate the recover-type error
+
+        Parameters
+        ----------
+        self : PoissonVEMModel object
+        rtype : str
+            'simple':
+            'area'
+            'inv_area'
+
+        See Also
+        --------
+
+        Notes
+        -----
+
+        """
+        mesh = self.mesh
+        NC = mesh.number_of_cells()
+        NV = mesh.number_of_vertices_of_cells()
+        cell, cellLocation = mesh.entity('cell')
+        barycenter = self.smspace.cellbarycenter
+
+        h = self.smspace.cellsize
+        area = self.cellmeasure
+        ldof = self.smspace.number_of_local_dofs()
+
+        # project the vem solution into linear polynomial space
+        idx = np.repeat(range(NC), NV)
+        S = self.project_to_smspace(uh)
+
+        grad = S.grad_value(barycenter)
+        S0 = self.smspace.function()
+        S1 = self.smspace.function()
+        n2c = mesh.ds.node_to_cell()
+
+        if method == 'simple':
+            d = n2c.sum(axis=1)
+            ruh = np.asarray((n2c@grad)/d.reshape(-1, 1))
+        elif method == 'area':
+            d = n2c@area
+            ruh = np.asarray((n2c@(grad*area.reshape(-1, 1)))/d.reshape(-1, 1))
+        elif method == 'inv_area':
+            d = n2c@(1/area)
+            ruh = np.asarray((n2c@(grad/area.reshape(-1,1)))/d.reshape(-1, 1))
+        else:
+            raise ValueError("I have note code method: {}!".format(rtype))
+
+        for i in range(ldof):
+            S0[i::ldof] = np.bincount(
+                    idx,
+                    weights=self.B[i, :]*ruh[cell, 0],
+                    minlength=NC)
+            S1[i::ldof] = np.bincount(
+                    idx,
+                    weights=self.B[i, :]*ruh[cell, 1],
+                    minlength=NC)
+
+        k = 1 # TODO: for general diffusion coef
+
+        node = mesh.node
+        gx = S0.value(node[cell], idx) - np.repeat(grad[:, 0], NV)
+        gy = S1.value(node[cell], idx) - np.repeat(grad[:, 1], NV)
+        eta = k*np.bincount(idx, weights=gx**2+gy**2)/NV*area
+
+
+        if residual is True:
+            fh = self.integralalg.fun_integral(pde.source, True)/area
+            g0 = S0.grad_value(barycenter)
+            g1 = S1.grad_value(barycenter)
+            eta += (fh + k*(g0[:, 0] + g1[:, 1]))**2*area**2
+
+        return np.sqrt(eta)
+
+    def smooth_estimator(self, eta):
+        mesh = self.mesh
+        NC = mesh.number_of_cells()
+        NN = mesh.number_of_nodes()
+        NV = mesh.number_of_vertices_of_cells()
+
+        nodeEta = np.zeros(NN, dtype=np.float_)
+
+        cell, cellLocation = mesh.entity('cell')
+        NNC = cellLocation[1:] - cellLocation[:-1] #number_of_node_per_cell
+        NCN = np.zeros(NN, dtype=np.int_) #number_of_cell_around_node
+
+        number = np.ones(NC, dtype=np.int_)
+
+        
+        for i in range(3):
+            nodeEta[:]=0
+            NCN[:]=0
+            k = 0
+            while True:
+                flag = NNC > k
+                if np.all(~flag):
+                    break
+                np.add.at(nodeEta, cell[cellLocation[:-1][flag]+k], eta[flag])
+                np.add.at(NCN, cell[cellLocation[:-1][flag]+k], number[flag])
+                k += 1
+            nodeEta = nodeEta/NCN
+            eta[:] = 0
+
+            k = 0
+            while True:
+                flag = NNC > k
+                if np.all(~flag):
+                    break
+                eta[flag] = eta[flag] + nodeEta[cell[cellLocation[:-1][flag]+k]]
+                k += 1
+            eta = eta/NNC
+        return eta
+        
+        
 
     def project(self, F, space1):
         """
@@ -454,7 +571,7 @@ class ConformingVirtualElementSpace2d():
         f = Function(self, dim=dim, array=array)
         return f
 
-    def set_dirichlet_bc(self, uh, g, is_dirichlet_boundary=None):
+    def set_dirichlet_bc(self, uh, g, threshold=None):
         """
         初始化解 uh  的第一类边界条件。
         """
@@ -463,7 +580,7 @@ class ConformingVirtualElementSpace2d():
         NE = self.mesh.number_of_edges()
         end = NN + (p - 1)*NE
         ipoints = self.interpolation_points()
-        isDDof = self.boundary_dof(threshold=is_dirichlet_boundary)
+        isDDof = self.boundary_dof(threshold=threshold)
         uh[isDDof] = g(ipoints[isDDof[:end]])
         return isDDof
 

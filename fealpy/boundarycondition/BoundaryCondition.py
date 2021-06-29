@@ -1,20 +1,195 @@
 import numpy as np
-from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, spdiags, eye
+from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, spdiags, eye, bmat
 
+
+class DirichletBC():
+    def __init__(self, space, gD, threshold=None):
+        self.space = space
+        self.gD = gD
+        self.threshold = threshold
+        self.bctype = 'Dirichlet'
+
+    def apply(self, A, F, uh=None, threshold=None):
+        space = self.space
+        gD = self.gD
+        threshold = self.threshold if threshold is None else threshold
+
+        gdof = space.number_of_global_dofs()
+        dim = A.shape[0]//gdof
+        if uh is None:
+            uh = self.space.function(dim=dim)
+        isDDof = space.set_dirichlet_bc(uh, gD, threshold=threshold)
+        if dim > 1:
+            isDDof = np.tile(isDDof, dim)
+            F = F.T.flat
+        x = uh.T.flat # 把 uh 按列展平
+        F -= A@x
+        bdIdx = np.zeros(A.shape[0], dtype=np.int)
+        bdIdx[isDDof] = 1
+        Tbd = spdiags(bdIdx, 0, A.shape[0], A.shape[0])
+        T = spdiags(1-bdIdx, 0, A.shape[0], A.shape[0])
+        A = T@A@T + Tbd
+        F[isDDof] = x[isDDof]
+        return A, F 
+
+    def apply_on_matrix(self, A, threshold=None):
+        space = self.space
+        gdof = space.number_of_global_dofs()
+        threshold = self.threshold if threshold is None else threshold
+
+        isDDof = space.boundary_dof(threshold=threshold)
+        dim = A.shape[0]//gdof # 如果是向量型问题
+        if dim > 1:
+            isDDof = np.tile(isDDof, dim)
+
+        bdIdx = np.zeros((A.shape[0], ), np.int)
+        bdIdx[isDDof] = 1
+        Tbd = spdiags(bdIdx, 0, A.shape[0], A.shape[0])
+        T = spdiags(1-bdIdx, 0, A.shape[0], A.shape[0])
+        A = T@A@T + Tbd
+        return A
+
+    def apply_on_vector(self, A, F):
+        space = self.space
+        threshold = self.threshold
+
+        gdof = space.number_of_global_dofs()
+        dim = A.shape[0]//gdof
+        uh = space.function(dim=dim)
+        isDDof = space.set_dirichlet_bc(uh, gD, threshold=threshold)
+        if dim > 1:
+            isDDof = np.tile(isDDof, dim)
+            F = F.T.flat
+        x = uh.T.flat # 把 uh 按列展平
+        F -= A@x
+        F[isBdDof] = x[isBdDof] 
+        return F 
+
+class NeumannBC():
+    def __init__(self, space, gN, threshold=None):
+        self.space = space
+        self.gN = gN
+        self.threshold = threshold
+        self.bctype = 'Neumann'
+
+    def apply(self, F, A=None, threshold=None, q=None):
+        """
+
+        Parameters
+        ----------
+
+        Notes
+        -----
+            当矩阵 A 不是 None的时候，就假设是纯 Neumann 边界条件，需要同时修改
+            矩阵 A 和右端 F, 并返回。
+
+            否则只返回 F
+        """
+        space = self.space
+        gN = self.gN
+        threshold = self.threshold if threshold is None else threshold
+        space.set_neumann_bc(F, gN, threshold=threshold, q=q)
+
+        if A is not None: # pure Neumann condtion
+            c = space.integral_basis()
+            A = bmat([[A, c.reshape(-1, 1)], [c, None]], format='csr')
+            F = np.r_[F, 0]
+            return A, F
+        else:
+            return F
+
+class RobinBC():
+    def __init__(self, space, gR, threshold=None):
+        self.space = space
+        self.gR = gR
+        self.threshold = threshold
+        self.bctype = "Robin"
+
+    def apply(self, A, F, threshold=None, q=None):
+        space = self.space
+        gR = self.gR
+        threshold = self.threshold if threshold is None else threshold
+        A, F = space.set_robin_bc(A, F, gR, threshold=threshold, q=q)
+        return A, F
+
+
+###
 class BoundaryCondition():
-    def __init__(self, space, dirichlet=None, neuman=None, robin=None):
+    def __init__(self, space, dirichlet=None, neumann=None, robin=None):
         self.space = space
         self.dirichlet = dirichlet
-        self.neuman = neuman
+        self.neumann = neumann
         self.robin = robin
 
-    def apply_neuman_bc(self, b, is_neuman_boundary=None):
+    def apply_robin_bc(self, A, b, is_robin_boundary=None):
+        """
+        apply the Robin boundary condition GD space.
+
+        Parameter
+        ---------
+        A : matrix with shape (GD*N, GD*N)
+        b : vector with shape (GD*N, )
+
+        Returns
+        -------
+
+        See also
+        --------
+
+        Notes
+        -----
+        The GD is the dimension of the problem space, and N is the number of
+        dofs.
+
+        Examples
+        --------
+
+        """
+        if self.robin is not None:
+            space = self.space
+            p = space.p
+            mesh = space.mesh
+            dim = 1 if len(b.shape) == 1 else b.shape[1]
+            face2dof = space.face_to_dof()
+
+            # find the index of all robin boundary 
+            idx = mesh.ds.boundary_face_index()
+            if is_robin_boundary is not None:
+                bc = mesh.entity_barycenter('face', index=idx)
+                flag = is_robin_boundary(bc)
+                idx = idx[flag]
+
+            measure = mesh.entity_measure('face', index=idx)
+            qf = mesh.integrator(p+3, 'face')
+            bcs, ws = qf.get_quadrature_points_and_weights()
+            phi = space.face_basis(bcs)
+            pp = mesh.bc_to_point(bcs, etype='face', index=idx)
+            n = mesh.face_unit_normal(index=idx)
+            val, kappa = self.robin(pp, n) # (NQ, NF, ...)
+            bb = np.einsum('m, mi..., mik, i->ik...', ws, val, phi, measure)
+            if dim == 1:
+                np.add.at(b, face2dof[idx], bb)
+            else:
+                np.add.at(b, (face2dof[idx], np.s_[:]), bb)
+
+            FM = np.einsum('m, mi, mij, mik, i->ijk', ws, kappa, phi, phi, measure)
+
+            fdof = space.number_of_local_dofs(etype='face')
+            I = np.einsum('k, ij->ijk', np.ones(fdof), face2dof[idx])
+            J = I.swapaxes(-1, -2)
+
+            # Construct the stiffness matrix
+            A += csr_matrix((FM.flat, (I.flat, J.flat)), shape=A.shape)
+
+
+
+    def apply_neumann_bc(self, b, is_neumann_boundary=None):
         """
 
         Parameters
         ----------
         b : array with shape (N, ) or (N, GD)
-        is_neuman_boundary : function object
+        is_neumann_boundary : function object
 
         Returns
         -------
@@ -26,18 +201,18 @@ class BoundaryCondition():
         --------
 
         """
-        if self.neuman is not None:
+        if self.neumann is not None:
             space = self.space
             p = space.p
             mesh = space.mesh
             dim = 1 if len(b.shape) == 1 else b.shape[1]
             face2dof = space.face_to_dof()
 
-            # find the index of all neuman boundary 
+            # find the index of all neumann boundary 
             idx = mesh.ds.boundary_face_index()
-            if is_neuman_boundary is not None:
+            if is_neumann_boundary is not None:
                 bc = mesh.entity_barycenter('face', index=idx)
-                flag = is_neuman_boundary(bc)
+                flag = is_neumann_boundary(bc)
                 idx = idx[flag]
             measure = mesh.entity_measure('face', index=idx)
             qf = mesh.integrator(p+3, 'face')
@@ -45,7 +220,7 @@ class BoundaryCondition():
             phi = space.face_basis(bcs)
             pp = mesh.bc_to_point(bcs, etype='face', index=idx)
             n = mesh.face_unit_normal(index=idx)
-            val = self.neuman(pp, n) # (NQ, NF, ...)
+            val = self.neumann(pp, n) # (NQ, NF, ...)
             bb = np.einsum('m, mi..., mik, i->ik...', ws, val, phi, measure)
             if dim == 1:
                 np.add.at(b, face2dof[idx], bb)
@@ -95,77 +270,5 @@ class BoundaryCondition():
             A = T@A@T + Tbd
             b[isDDof] = x[isDDof]
             return A, b
-
-
-class DirichletBC:
-    def __init__(self, V, g0, is_dirichlet_dof=None):
-        self.V = V
-        self.g0 = g0
-
-        if is_dirichlet_dof == None:
-            isBdDof = V.boundary_dof()
-        else:
-            ipoints = V.interpolation_points()
-            isBdDof = is_dirichlet_dof(ipoints)
-
-        self.isBdDof = isBdDof
-
-    def apply(self, A, b):
-        """ Modify matrix A and b
-        """
-        g0 = self.g0
-        V = self.V
-        isBdDof = self.isBdDof
-
-        gdof = V.number_of_global_dofs()
-        x = np.zeros((gdof,), dtype=np.float)
-        ipoints = V.interpolation_points()
-        # the length of ipoints and isBdDof maybe different
-        idx, = np.nonzero(isBdDof)
-        x[isBdDof] = g0(ipoints[idx])
-        b -= A@x
-        bdIdx = np.zeros(gdof, dtype=np.int)
-        bdIdx[isBdDof] = 1
-        Tbd = spdiags(bdIdx, 0, gdof, gdof)
-        T = spdiags(1-bdIdx, 0, gdof, gdof)
-        A = T@A@T + Tbd
-
-        b[isBdDof] = x[isBdDof]
-        return A, b
-
-    def apply_on_matrix(self, A):
-
-        V = self.V
-        isBdDof = self.isBdDof
-        gdof = V.number_of_global_dofs()
-
-        bdIdx = np.zeros((A.shape[0], ), np.int)
-        bdIdx[isBdDof] = 1
-        Tbd = spdiags(bdIdx, 0, A.shape[0], A.shape[0])
-        T = spdiags(1-bdIdx, 0, A.shape[0], A.shape[0])
-        A = T@A@T + Tbd
-
-        return A
-
-    def apply_on_vector(self, b, A):
-        
-        g0 = self.g0
-        V = self.V
-        isBdDof = self.isBdDof
-
-        gdof = V.number_of_global_dofs()
-        x = np.zeros((gdof,), dtype=np.float)
-
-        ipoints = V.interpolation_points()
-        x[isBdDof] = g0(ipoints[isBdDof,:])
-        b -= A@x
-
-        b[isBdDof] = x[isBdDof] 
-
-        return b
-
-
-
-        
 
 

@@ -1,5 +1,6 @@
 import numpy as np
 
+from fealpy.decorator import cartesian, barycentric
 from ..mesh.TriangleMesh import TriangleMesh
 from ..mesh.Quadtree import Quadtree
 from ..mesh.QuadrangleMesh import QuadrangleMesh
@@ -7,6 +8,283 @@ from ..mesh.Tritree import Tritree
 from ..mesh.StructureQuadMesh import StructureQuadMesh
 from ..mesh.TriangleMesh import TriangleMesh, TriangleMeshWithInfinityNode
 from ..mesh.PolygonMesh import PolygonMesh
+from ..mesh.HalfEdgeMesh2d import HalfEdgeMesh2d
+
+class CosCosData:
+    """
+    -\Delta u = f
+    u = cos(pi*x)*cos(pi*y)
+    """
+    def __init__(self):
+        pass
+
+    def domain(self):
+        return np.array([0, 1, 0, 1])
+
+    def init_mesh(self, n=4, meshtype='tri', h=0.1):
+        """ generate the initial mesh
+        """
+        node = np.array([
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (0, 1)], dtype=np.float64)
+
+        if meshtype == 'quadtree':
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int_)
+            mesh = Quadtree(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        if meshtype == 'quad':
+            node = np.array([
+                (0, 0),
+                (1, 0),
+                (1, 1),
+                (0, 1),
+                (0.5, 0),
+                (1, 0.4),
+                (0.3, 1),
+                (0, 0.6),
+                (0.5, 0.45)], dtype=np.float64)
+            cell = np.array([
+                (0, 4, 8, 7), (4, 1, 5, 8),
+                (7, 8, 6, 3), (8, 5, 2, 6)], dtype=np.int_)
+            mesh = QuadrangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'tri':
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
+            mesh = TriangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'halfedge':
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
+            mesh = TriangleMesh(node, cell)
+            mesh = HalfEdgeMesh2d.from_mesh(mesh)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'squad':
+            mesh = StructureQuadMesh([0, 1, 0, 1], h)
+            return mesh
+        else:
+            raise ValueError("".format)
+
+
+    @cartesian
+    def solution(self, p):
+        """ The exact solution 
+        Parameters
+        ---------
+        p : 
+
+
+        Examples
+        -------
+        p = np.array([0, 1], dtype=np.float64)
+        p = np.array([[0, 1], [0.5, 0.5]], dtype=np.float64)
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        val = np.cos(pi*x)*np.cos(pi*y)
+        return val # val.shape == x.shape
+
+
+    @cartesian
+    def source(self, p):
+        """ The right hand side of Possion equation
+        INPUT:
+            p: array object,  
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        val = 2*pi*pi*np.cos(pi*x)*np.cos(pi*y)
+        return val
+
+    @cartesian
+    def gradient(self, p):
+        """ The gradient of the exact solution 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        pi = np.pi
+        val = np.zeros(p.shape, dtype=np.float64)
+        val[..., 0] = -pi*np.sin(pi*x)*np.cos(pi*y)
+        val[..., 1] = -pi*np.cos(pi*x)*np.sin(pi*y)
+        return val # val.shape == p.shape
+
+    @cartesian
+    def flux(self, p):
+        return -self.gradient(p)
+
+    @cartesian
+    def dirichlet(self, p):
+        return self.solution(p)
+
+    @cartesian
+    def is_dirichlet_boundary(self, p):
+        y = p[..., 1]
+        return ( y == 1.0) | ( y == 0.0)
+
+    @cartesian
+    def neumann(self, p, n):
+        """ 
+        Neuman  boundary condition
+
+        Parameters
+        ----------
+
+        p: (NQ, NE, 2)
+        n: (NE, 2)
+
+        grad*n : (NQ, NE, 2)
+        """
+        grad = self.gradient(p) # (NQ, NE, 2)
+        val = np.sum(grad*n, axis=-1) # (NQ, NE)
+        return val
+
+    @cartesian
+    def is_neumann_boundary(self, p):
+        x = p[..., 0]
+        return x == 1.0
+
+    @cartesian
+    def robin(self, p, n):
+        grad = self.gradient(p) # (NQ, NE, 2)
+        val = np.sum(grad*n, axis=-1)
+        shape = len(val.shape)*(1, )
+        kappa = np.array([1.0], dtype=np.float64).reshape(shape)
+        val += self.solution(p) 
+        return val, kappa
+
+    @cartesian
+    def is_robin_boundary(self, p):
+        x = p[..., 0]
+        return x == 0.0
+
+class X2Y2Data:
+    """
+    -\Delta u = f
+    u = cos(pi*x)*cos(pi*y)
+    """
+    def __init__(self):
+        pass
+
+    def domain(self):
+        return np.array([0, 1, 0, 1])
+
+    def init_mesh(self, n=4, meshtype='tri', h=0.1):
+        """ generate the initial mesh
+        """
+        node = np.array([
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (0, 1)], dtype=np.float64)
+
+        if meshtype == 'quadtree':
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int_)
+            mesh = Quadtree(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        if meshtype == 'quad':
+            node = np.array([
+                (0, 0),
+                (1, 0),
+                (1, 1),
+                (0, 1),
+                (0.5, 0),
+                (1, 0.4),
+                (0.3, 1),
+                (0, 0.6),
+                (0.5, 0.45)], dtype=np.float64)
+            cell = np.array([
+                (0, 4, 8, 7), (4, 1, 5, 8),
+                (7, 8, 6, 3), (8, 5, 2, 6)], dtype=np.int_)
+            mesh = QuadrangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'tri':
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
+            mesh = TriangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'squad':
+            mesh = StructureQuadMesh([0, 1, 0, 1], h)
+            return mesh
+        else:
+            raise ValueError("".format)
+
+
+    def solution(self, p):
+        """ The exact solution 
+        Parameters
+        ---------
+        p : 
+
+
+        Examples
+        -------
+        p = np.array([0, 1], dtype=np.float64)
+        p = np.array([[0, 1], [0.5, 0.5]], dtype=np.float64)
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        val = x**2*y**2 
+        return val # val.shape == x.shape
+
+
+    def source(self, p):
+        """ The right hand side of Possion equation
+        INPUT:
+            p: array object,  
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        val = -2*(x**2 + y**2) 
+        return val
+
+    def gradient(self, p):
+        """ The gradient of the exact solution 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        val = np.zeros(p.shape, dtype=np.float64)
+        val[..., 0] = 2*x*y**2 
+        val[..., 1] = 2*x**2*y 
+        return val # val.shape == p.shape
+
+    def flux(self, p):
+        return -self.gradient(p)
+
+    def dirichlet(self, p):
+        return self.solution(p)
+
+    def neumann(self, p, n):
+        """ 
+        Neuman  boundary condition
+
+        Parameters
+        ----------
+
+        p: (NQ, NE, 2)
+        n: (NE, 2)
+
+        grad*n : (NQ, NE, 2)
+        """
+        grad = self.gradient(p) # (NQ, NE, 2)
+        val = np.sum(grad*n, axis=-1) # (NQ, NE)
+        return val
+
+    def robin(self, p, n):
+        grad = self.gradient(p) # (NQ, NE, 2)
+        val = np.sum(grad*n, axis=-1)
+        shape = len(val.shape)*(1, )
+        kappa = np.array([1.0], dtype=np.float64).reshape(shape)
+        val += self.solution(p) 
+        return val, kappa
+
 
 class TwoHolesData:
     def __init__(self):
@@ -16,27 +294,27 @@ class TwoHolesData:
         if domaintype == 'meshpy':
             from meshpy.triangle import MeshInfo
             domain = MeshInfo()
-            points = np.zeros((16, 2), dtype=np.float)
+            points = np.zeros((16, 2), dtype=np.float64)
             points[0:4, :] = np.array(
                     [(0.0, 0.0),
                      (1.0, 0.0),
                      (1.0, 1.0),
-                     (0.0, 1.0)], dtype=np.float)
+                     (0.0, 1.0)], dtype=np.float64)
             idx = np.arange(5, -1, -1)
             points[4:10, 0] = 0.25 + 0.1*np.cos(idx*np.pi/3)
             points[4:10, 1] = 0.75 + 0.1*np.sin(idx*np.pi/3)
             points[10:, 0] = 0.6 + 0.1*np.cos(idx*np.pi/3)
             points[10:, 1] = 0.4 + 0.1*np.sin(idx*np.pi/3)
 
-            facets = np.zeros((16, 2), dtype=np.int)
+            facets = np.zeros((16, 2), dtype=np.int_)
             facets[0:4, :] = np.array([(0, 1), (1, 2), (2, 3), (3, 0)],
-                    dtype=np.int)
+                    dtype=np.int_)
             facets[4:10, :] = np.array(
                     [(4, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 4)],
-                    dtype=np.int)
+                    dtype=np.int_)
             facets[10:, :] = np.array(
                     [(10, 11), (11, 12), (12, 13), (13, 14),
-                        (14, 15), (15, 10)], dtype=np.int)
+                        (14, 15), (15, 10)], dtype=np.int_)
             domain.set_points(points)
             domain.set_facets(facets)
             domain.set_holes([(0.25, 0.75), (0.6, 0.4)])
@@ -48,8 +326,8 @@ class TwoHolesData:
         from meshpy.triangle import build
         domain = self.domain(domaintype='meshpy')
         mesh = build(domain, max_volume=h**2)
-        node = np.array(mesh.points, dtype=np.float)
-        cell = np.array(mesh.elements, dtype=np.int)
+        node = np.array(mesh.points, dtype=np.float64)
+        cell = np.array(mesh.elements, dtype=np.int_)
         if meshtype == 'tri':
             return TriangleMesh(node, cell)
         elif meshtype == 'polygon':
@@ -88,7 +366,7 @@ class TwoHolesData:
         x = p[..., 0]
         y = p[..., 1]
         pi = np.pi
-        val = np.zeros(p.shape, dtype=np.float)
+        val = np.zeros(p.shape, dtype=np.float64)
         val[..., 0] = 0.0
         val[..., 1] = 0.0
         return val
@@ -96,7 +374,7 @@ class TwoHolesData:
     def dirichlet(self, p):
         return 0.0
 
-    def neuman(self, p):
+    def neumann(self, p):
         """ Neuman  boundary condition
         """
         pass
@@ -104,107 +382,6 @@ class TwoHolesData:
     def robin(self, p):
         pass
 
-class CosCosData:
-    """
-    -\Delta u = f
-    u = cos(pi*x)*cos(pi*y)
-    """
-    def __init__(self):
-        pass
-
-    def domain(self):
-        return np.array([0, 1, 0, 1])
-
-    def init_mesh(self, n=4, meshtype='tri', h=0.1):
-        """ generate the initial mesh
-        """
-        node = np.array([
-            (0, 0),
-            (1, 0),
-            (1, 1),
-            (0, 1)], dtype=np.float)
-
-        if meshtype == 'quadtree':
-            cell = np.array([(0, 1, 2, 3)], dtype=np.int)
-            mesh = Quadtree(node, cell)
-            mesh.uniform_refine(n)
-            return mesh
-        if meshtype == 'quad':
-            node = np.array([
-                (0, 0),
-                (1, 0),
-                (1, 1),
-                (0, 1),
-                (0.5, 0),
-                (1, 0.4),
-                (0.3, 1),
-                (0, 0.6),
-                (0.5, 0.45)], dtype=np.float)
-            cell = np.array([
-                (0, 4, 8, 7), (4, 1, 5, 8),
-                (7, 8, 6, 3), (8, 5, 2, 6)], dtype=np.int)
-            mesh = QuadrangleMesh(node, cell)
-            mesh.uniform_refine(n)
-            return mesh
-        elif meshtype == 'tri':
-            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
-            mesh = TriangleMesh(node, cell)
-            mesh.uniform_refine(n)
-            return mesh
-        elif meshtype == 'stri':
-            mesh = StructureQuadMesh([0, 1, 0, 1], h)
-            return mesh
-        else:
-            raise ValueError("".format)
-
-
-    def solution(self, p):
-        """ The exact solution 
-        """
-        x = p[..., 0]
-        y = p[..., 1]
-        pi = np.pi
-        val = np.cos(pi*x)*np.cos(pi*y)
-        return val
-
-
-    def source(self, p):
-        """ The right hand side of Possion equation
-        INPUT:
-            p: array object,  
-        """
-        x = p[..., 0]
-        y = p[..., 1]
-        pi = np.pi
-        val = 2*pi*pi*np.cos(pi*x)*np.cos(pi*y)
-        return val
-
-
-    def gradient(self, p):
-        """ The gradient of the exact solution 
-        """
-        x = p[..., 0]
-        y = p[..., 1]
-        pi = np.pi
-        val = np.zeros(p.shape, dtype=np.float)
-        val[..., 0] = -pi*np.sin(pi*x)*np.cos(pi*y)
-        val[..., 1] = -pi*np.cos(pi*x)*np.sin(pi*y)
-        return val
-
-    def dirichlet(self, p):
-        return self.solution(p)
-
-    def neuman(self, p, n):
-        """ Neuman  boundary condition
-        p: (NQ, NE, 2)
-        n: (NE, 2)
-        """
-        grad = self.gradient(p) # (NQ, NE, 2)
-        val = np.sum(grad*n, axis=-1)
-        return val
-
-    def robin(self, p):
-        pass
 
 class ffData:
     def __init__(self):
@@ -215,20 +392,20 @@ class ffData:
             (0, 0),
             (1, 0),
             (1, 1),
-            (0, 1)], dtype=np.float)
+            (0, 1)], dtype=np.float64)
 
         if meshtype == 'tri':
-            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
         elif meshtype == 'quadtree':
-            cell = np.array([(0, 1, 2, 3)], dtype=np.int)
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int_)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
         elif meshtype == 'tritree':
-            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
             mesh = Tritree(node, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -248,7 +425,7 @@ class ffData:
         x = p[..., 0]
         y = p[..., 1]
 
-        val = np.ones(x.shape, dtype=np.float)
+        val = np.ones(x.shape, dtype=np.float64)
         I = np.floor(4*x) + np.floor(4*y)
         isMinus = (I % 2 == 0)
         val[isMinus] = - 1
@@ -276,7 +453,7 @@ class KelloggData:
             (1, 0),
             (-1, 1),
             (0, 1),
-            (1, 1)], dtype=np.float)
+            (1, 1)], dtype=np.float64)
         if meshtype == 'tri':
             cell = np.array([
                 (1, 4, 0),
@@ -286,7 +463,7 @@ class KelloggData:
                 (4, 7, 3),
                 (6, 3, 7),
                 (7, 4, 8),
-                (5, 8, 4)], dtype=np.int)
+                (5, 8, 4)], dtype=np.int_)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
         elif meshtype == 'quadtree':
@@ -294,7 +471,7 @@ class KelloggData:
                 (0, 1, 4, 3),
                 (1, 2, 5, 4),
                 (3, 4, 7, 6),
-                (4, 5, 8, 7)], dtype=np.int)
+                (4, 5, 8, 7)], dtype=np.int_)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
         else:
@@ -303,7 +480,7 @@ class KelloggData:
 
     def diffusion_coefficient(self, p):
         idx = (p[..., 0]*p[..., 1] > 0)
-        k = np.ones(p.shape[:-1], dtype=np.float)
+        k = np.ones(p.shape[:-1], dtype=np.float64)
         k[idx] = self.a
         return k
 
@@ -403,7 +580,7 @@ class LShapeRSinData:
             (1, 0),
             (-1, 1),
             (0, 1),
-            (1, 1)], dtype=np.float)
+            (1, 1)], dtype=np.float64)
         if meshtype == 'tri':
             cell = np.array([
                 (1, 3, 0),
@@ -411,7 +588,7 @@ class LShapeRSinData:
                 (3, 6, 2),
                 (5, 2, 6),
                 (4, 7, 3),
-                (6, 3, 7)], dtype=np.int)
+                (6, 3, 7)], dtype=np.int_)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -419,7 +596,7 @@ class LShapeRSinData:
             cell = np.array([
                 (0, 1, 3, 2),
                 (2, 3, 6, 5),
-                (3, 4, 7, 6)], dtype=np.int)
+                (3, 4, 7, 6)], dtype=np.int_)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -430,9 +607,12 @@ class LShapeRSinData:
                 (3, 6, 2),
                 (5, 2, 6),
                 (4, 7, 3),
-                (6, 3, 7)], dtype=np.int)
-            mesh = Tritree(node, cell)
+                (6, 3, 7)], dtype=np.int_)
+            mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
+            node = mesh.entity('node')
+            cell = mesh.entity('cell')
+            mesh = Tritree(node, cell)
             return mesh
         else:
             raise ValueError("I don't know the meshtype %s".format(meshtype))
@@ -442,6 +622,7 @@ class LShapeRSinData:
         facets = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0)]
         return points, facets
 
+    @cartesian
     def solution(self, p):
         x = p[..., 0]
         y = p[..., 1]
@@ -451,14 +632,17 @@ class LShapeRSinData:
         u = (x*x + y*y)**(1/3)*np.sin(2/3*theta)
         return u
 
+    @cartesian
     def source(self, p):
         """the right hand side of Possion equation
         INPUT:
             p: array object, N*2
         """
-        rhs = np.zeros(p.shape[0:-1])
-        return rhs
+        val = np.array([0.0], dtype=np.float64)
+        shape = len(p.shape[:-1])*(1, )
+        return val.reshape(shape)
 
+    @cartesian
     def gradient(self, p):
         """ The gradient of the exact solution
         """
@@ -475,6 +659,7 @@ class LShapeRSinData:
         val[..., 1] = 2*(x*cos(2*theta/3) + y*sin(2*theta/3))/(3*r**(2/3))
         return val
 
+    @cartesian
     def dirichlet(self, p):
         """Dilichlet boundary condition
         """
@@ -493,13 +678,13 @@ class CrackData:
                 (0, 0),
                 (1, 0),
                 (1, 0),
-                (0, 1)], dtype=np.float)
+                (0, 1)], dtype=np.float64)
 
             cell = np.array([
                 (2, 1, 0),
                 (2, 0, 3),
                 (2, 5, 1),
-                (2, 4, 5)], dtype=np.int)
+                (2, 4, 5)], dtype=np.int_)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -525,7 +710,7 @@ class CrackData:
                 (r, r),
                 (-rr, rr),
                 (rr, rr),
-                (0, 1)], dtype=np.float)
+                (0, 1)], dtype=np.float64)
             cell = np.array([
                 (0, 4, 3, 1),
                 (2, 5, 4, 0),
@@ -538,7 +723,7 @@ class CrackData:
                 (8, 11, 14, 13),
                 (11, 10, 16, 14),
                 (12, 13, 17, 15),
-                (13, 14, 16, 17)], dtype=np.int)
+                (13, 14, 16, 17)], dtype=np.int_)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -549,13 +734,13 @@ class CrackData:
                 (0, 0),
                 (1, 0),
                 (1, 0),
-                (0, 1)], dtype=np.float)
+                (0, 1)], dtype=np.float64)
 
             cell = np.array([
                 (2, 1, 0),
                 (2, 0, 3),
                 (2, 5, 1),
-                (2, 4, 5)], dtype=np.int)
+                (2, 4, 5)], dtype=np.int_)
             mesh = Tritree(node, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -605,15 +790,15 @@ class TwoSigularData:
             (-1, -1),
             (1, -1),
             (1, 1),
-            (-1, 1)], dtype=np.float)
+            (-1, 1)], dtype=np.float64)
 
         if meshtype == 'quadtree':
-            cell = np.array([(0, 1, 2, 3)], dtype=np.int)
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int_)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
         elif meshtype == 'tri':
-            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -657,7 +842,7 @@ class TwoSigularData:
         y = p[..., 1]
         t0 = (x + 0.5)**2 + (y - 0.5)**2 + 0.01
         t1 = (x - 0.5)**2 + (y + 0.5)**2 + 0.01
-        val = np.zeros(p.shape, dtype=np.float)
+        val = np.zeros(p.shape, dtype=np.float64)
         val[..., 0] = -(1.0 - 2*x)/t1**2 + (-2*x - 1.0)/t0**2
         val[..., 1] =(1.0 - 2*y)/t0**2 - (-2*y - 1.0)/t1**2
         return val
@@ -684,15 +869,15 @@ class CornerSigularData:
             (0, 0),
             (1, 0),
             (1, 1),
-            (0, 1)], dtype=np.float)
+            (0, 1)], dtype=np.float64)
 
         if meshtype == 'quadtree':
-            cell = np.array([(0, 1, 2, 3)], dtype=np.int)
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int_)
             mesh = Quadtree(node, cell)
             mesh.uniform_refine(n)
             return mesh
         elif meshtype == 'tri':
-            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
             mesh = TriangleMesh(node, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -724,7 +909,7 @@ class CornerSigularData:
         """
         x = p[..., 0]
         y = p[..., 1]
-        val = np.zeros(p.shape, dtype=np.float)
+        val = np.zeros(p.shape, dtype=np.float64)
         val[..., 0] = 0.4*x*(x**2 + y**2)**(-0.8)
         val[..., 1] = 0.4*y*(x**2 + y**2)**(-0.8)
         return val
@@ -754,14 +939,14 @@ class SinSinData:
             (-1, -1),
             (1, -1),
             (1, 1),
-            (-1, 1)], dtype=np.float)
+            (-1, 1)], dtype=np.float64)
         if meshtype == 'quadtree':
-            cell = np.array([(0, 1, 2, 3)], dtype=np.int)
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int_)
             mesh = Quadtree(point, cell)
             mesh.uniform_refine(n)
             return mesh
         elif meshtype == 'tri':
-            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
             mesh = TriangleMesh(point, cell)
             mesh.uniform_refine(n)
             return mesh
@@ -803,7 +988,7 @@ class SinSinData:
         x = p[..., 0]
         y = p[..., 1]
         pi = np.pi
-        uprime = np.zeros(p.shape, dtype=np.float)
+        uprime = np.zeros(p.shape, dtype=np.float64)
         uprime[..., 0] = pi*np.cos(pi*x)*np.sin(pi*y)
         uprime[..., 1] = pi*np.sin(pi*x)*np.cos(pi*y)
         return uprime
@@ -819,6 +1004,54 @@ class PolynomialData:
         y = p[..., 1]
         u = (x-x**2)*(y-y**2)
         return u
+
+    def init_mesh(self, n=4, meshtype='tri', h=0.1):
+        """ generate the initial mesh
+        """
+        node = np.array([
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (0, 1)], dtype=np.float64)
+
+        if meshtype == 'quadtree':
+            cell = np.array([(0, 1, 2, 3)], dtype=np.int_)
+            mesh = Quadtree(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        if meshtype == 'quad':
+            node = np.array([
+                (0, 0),
+                (1, 0),
+                (1, 1),
+                (0, 1),
+                (0.5, 0),
+                (1, 0.4),
+                (0.3, 1),
+                (0, 0.6),
+                (0.5, 0.45)], dtype=np.float64)
+            cell = np.array([
+                (0, 4, 8, 7), (4, 1, 5, 8),
+                (7, 8, 6, 3), (8, 5, 2, 6)], dtype=np.int_)
+            mesh = QuadrangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'tri':
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
+            mesh = TriangleMesh(node, cell)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'halfedge':
+            cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int_)
+            mesh = TriangleMesh(node, cell)
+            mesh = HalfEdgeMesh2d.from_mesh(mesh)
+            mesh.uniform_refine(n)
+            return mesh
+        elif meshtype == 'squad':
+            mesh = StructureQuadMesh([0, 1, 0, 1], h)
+            return mesh
+        else:
+            raise ValueError("".format)
 
     def source(self, p):
         """ The right hand side of Possion equation
@@ -842,7 +1075,7 @@ class PolynomialData:
         x = p[..., 0]
         y = p[..., 1]
         pi = np.pi
-        uprime = np.zeros(p.shape, dtype=np.float)
+        uprime = np.zeros(p.shape, dtype=np.float64)
         uprime[..., 0] = (1-2*x)*(y-y**2)
         uprime[..., 1] = (1-2*y)*(x-x**2)
         return uprime
@@ -886,9 +1119,54 @@ class ExpData:
         x = p[..., 0]
         y = p[..., 1]
         pi = np.pi
-        uprime = np.zeros(p.shape, dtype=np.float)
+        uprime = np.zeros(p.shape, dtype=np.float64)
         uprime[..., 0] = 2*x*(np.exp(x**2+y**2))
         uprime[..., 1] = 2*y*(np.exp(x**2+y**2))
+        return uprime
+
+    def is_boundary(self, p):
+        eps = 1e-14 
+        return (p[:,0] < eps) | (p[:,1] < eps) | (p[:, 0] > 1.0 - eps) | (p[:, 1] > 1.0 - eps)
+
+class ArctanData:
+    def __init__(self):
+        pass
+
+    @cartesian
+    def solution(self, p):
+        """ The exact solution 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        u = np.arctan((x**2+y**2)*100)
+        return u
+
+    @cartesian
+    def source(self, p):
+        """ The right hand side of Possion equation
+        INPUT:
+            p: array object, N*2 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        a = 10000*(x**2+y**2)**2
+        rhs = -100*(4-4*a)/(a+1)**2
+        return rhs
+
+    def dirichlet(self, p):
+        """ Dilichlet boundary condition
+        """
+        return self.solution(p)
+
+    def gradient(self, p):
+        """ The gradient of the exact solution 
+        """
+        x = p[..., 0]
+        y = p[..., 1]
+        a = 10000*(x**2+y**2)**2
+        uprime = np.zeros(p.shape, dtype=np.float64)
+        uprime[..., 0] = 200*x/(1+a)
+        uprime[..., 1] = 200*y/(1+a)
         return uprime
 
     def is_boundary(self, p):

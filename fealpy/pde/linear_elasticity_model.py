@@ -1,5 +1,7 @@
 import numpy as np
 
+from ..decorator  import cartesian 
+
 class LinearElasticityTempalte():
     def __init__(self):
         pass
@@ -10,32 +12,140 @@ class LinearElasticityTempalte():
     def init_mesh(self):
         pass
 
+    @cartesian
     def displacement(self, p):
         pass
 
+    @cartesian
     def jacobian(self, p):
         pass
 
+    @cartesian
     def strain(self, p):
         pass
 
+    @cartesian
     def stress(self, p):
         pass
 
+    @cartesian
     def source(self, p):
         pass
 
+    @cartesian
     def dirichlet(self, p):
         pass
 
-    def neuman(self, p):
+    @cartesian
+    def neumann(self, p):
         pass
 
+    @cartesian
     def is_dirichlet_boundary(self, p):
         pass
 
+    @cartesian
     def is_neuman_boundary(self, p):
         pass
+
+    @cartesian
+    def is_fracture_boundary(self, p):
+        pass
+
+class BeamData2d():
+    def __init__(self, E = 2*10**6, nu = 0.3):
+        self.l = 48
+        self.h = 12
+        self.q = 100
+
+        self.nu = nu
+        self.E = E
+       
+        self.lam = self.nu*self.E/((1+self.nu)*(1-2*self.nu))
+        self.mu = self.E/(2*(1+self.nu))       
+
+    def domain(self):
+        return [0.0, self.l, -self.h/2.0, self.h/2.0]
+
+    def init_mesh(self, n=1):
+        from fealpy.mesh.simple_mesh_generator import rectangledomainmesh
+        domain = self.domain()
+        mesh = rectangledomainmesh(domain, nx=4*n, ny=1*n, meshtype='tri')
+        return mesh
+
+    @cartesian
+    def displacement(self, p):
+        q = self.q
+        l = self.l
+        h = self.h
+        
+        nu = self.nu
+        E = self.E
+        I = h**3/12
+         
+        x = p[..., 0]
+        y = p[..., 1]
+        
+        val = np.zeros_like(p)
+
+        val[..., 0] = -q*x*y*(l-x)*(l-2*x)/(12*E*I)
+        val[..., 0] += q*(l-2*x)*y*(3*(1+nu)*h**2 - 2*(2+nu)*y**2)/(24*E*I)
+        
+        val[..., 1] = q*(l-x)**2*x**2/(24*E*I)
+        val[..., 1] += q*(-2*(1+2*nu)*y**4 + ((6*x**2-6*l*x+l**2)*2*nu+3*h**2*(nu+1)**2)*y**2 + 24*I*(nu**2-1)*y)/(48*E*I)
+                
+        return val
+        
+    @cartesian
+    def stress(self, p):
+        q = self.q
+        l = self.l
+        h = self.h
+        
+        nu = self.nu
+        E = self.E
+        I = h**3/12    
+        x = p[..., 0]
+        y = p[..., 1]
+        
+        shape = p.shape[:-1] + (2, 2)
+        val = np.zeros(shape, dtype=np.float)
+        
+        val[..., 0, 0] += -q*(x**2-l*x+l**2/6)*y/(2*I)    
+        val[..., 0, 0] += q*(8*y**3-3*(2+nu)*h**2*y-nu*h**3)/(24*I)  
+        
+        val[..., 0, 1] += q*(l-2*x)(h**2/4-y**2)/(4*I) 
+        
+        val[..., 1, 0] += q*(l-2*x)(h**2/4-y**2)/(4*I) 
+        
+        val[..., 1, 1] += -q*(4*y**3-3*h**2*y+h**3)/(24*I)
+        return val
+        
+    @cartesian
+    def source(self, p):
+        val = np.zeros_like(p)
+        return val 
+        
+    @cartesian
+    def dirichlet(self, p):  
+        val = np.zeros_like(p) 
+        return val
+        
+    @cartesian    
+    def neumann(self, p, n):  # p 是受到面力的节点坐标
+        val = np.array([0.0, -self.q], dtype=np.float64)
+        shape = len(p.shape[:-1])*(1, ) + (2, )
+        return val.reshape(shape)
+        
+    @cartesian
+    def is_dirichlet_boundary(self, p):
+        eps = 1e-10
+        return (np.abs(p[..., 0]) < eps) | (np.abs(p[..., 0]-self.l) < eps)
+        
+    @cartesian        
+    def is_neumann_boundary(self, p):
+        eps = 1e-10
+        return (np.abs(p[..., 1]-self.h/2) < eps)
 
 class BoxDomainData3d():
     def __init__(self):
@@ -62,28 +172,34 @@ class BoxDomainData3d():
         mesh = boxmesh3d(domain, nx=5*n, ny=1*n, nz=1*n, meshtype='tet')
         return mesh
 
+    @cartesian
     def displacement(self, p):
         pass
 
+    @cartesian
     def jacobian(self, p):
         pass
 
+    @cartesian
     def strain(self, p):
         pass
 
+    @cartesian
     def stress(self, p):
         pass
 
+    @cartesian
     def source(self, p):
         shape = len(p.shape[:-1])*(1,) + (-1, )
         val = self.d*self.g*self.rho
         return val.reshape(shape) 
-
+    @cartesian
     def dirichlet(self, p):
         shape = len(p.shape)*(1, )
         val = np.array([0.0])
         return val.reshape(shape)
 
+    @cartesian
     def is_dirichlet_boundary(self, p):
         return np.abs(p[..., 0]) < 1e-12
 
@@ -237,7 +353,7 @@ class LShapeDomainData2d():
         val = self.displacement(p)
         return val
 
-    def neuman(self, p, n):
+    def neumann(self, p, n):
         val = np.zeros_like(p)
         return val
 
@@ -282,7 +398,7 @@ class CookMembraneData():
         mesh = build(domain, max_volume=h**2)
         node = np.array(mesh.points, dtype=np.float)
         cell = np.array(mesh.elements, dtype=np.int)
-        if meshtype is 'tri':
+        if meshtype == 'tri':
             mesh = TriangleMesh(node, cell)
             return mesh 
 
@@ -299,7 +415,7 @@ class CookMembraneData():
         val = np.zeros(p.shape, dtype=p.dtype)
         return val 
 
-    def neuman(self, p, n):  # p 是受到面力的节点坐标
+    def neumann(self, p, n):  # p 是受到面力的节点坐标
         """
         Neuman  boundary condition
         p: (NQ, NE, 2)
@@ -319,7 +435,7 @@ class CookMembraneData():
         x = p[..., 0]
         return  np.abs(x) < 1e-12
 
-    def is_neuman_boundary(self, p):
+    def is_neumann_boundary(self, p):
         x = p[..., 0]
         return np.abs(x - 48) < 1e-12
 
@@ -382,7 +498,7 @@ class CantileverBeam2d():
         val = np.zeros(p.shape, dtype=p.dtype)
         return val
 
-    def neuman(self, p, n):  # p 是受到面力的节点坐标
+    def neumann(self, p, n):  # p 是受到面力的节点坐标
         """
         Neuman  boundary condition
         p: (NQ, NE, 2)
@@ -401,7 +517,7 @@ class CantileverBeam2d():
     def is_dirichlet_boundary(self, p):
         return  np.abs(p[..., 0]) < 1e-12
 
-    def is_neuman_boundary(self, p):
+    def is_neumann_boundary(self, p):
         return np.abs(p[..., 0] - self.L) < 1e-12
 
 
@@ -544,6 +660,7 @@ class PolyModel3d():
         mesh.uniform_refine(n)
         return mesh
 
+    @cartesian
     def displacement(self, p):
         x = p[..., 0]
         y = p[..., 1]
@@ -552,6 +669,7 @@ class PolyModel3d():
         val = np.einsum('...j, k->...jk', val, np.array([2**4, 2**5, 2**6]))
         return val
 
+    @cartesian
     def grad_displacement(self, p):
         x = p[..., 0]
         y = p[..., 1]
@@ -573,6 +691,7 @@ class PolyModel3d():
         val[..., 2, 2] = -c*t1*(-x + 1)*(-y + 1) + c*x*y*t0
         return val
 
+    @cartesian
     def stress(self, p):
         lam = self.lam
         mu = self.mu
@@ -583,6 +702,7 @@ class PolyModel3d():
         return val
         
 
+    @cartesian
     def compliance_tensor(self, phi):
         lam = self.lam
         mu = self.mu
@@ -592,9 +712,11 @@ class PolyModel3d():
         aphi /= 2*mu
         return aphi
 
+    @cartesian
     def div_stress(self, p):
         return -self.source(p)
 
+    @cartesian
     def source(self, p):
         lam = self.lam
         mu = self.mu
@@ -623,6 +745,17 @@ class PolyModel3d():
         val[..., 2] -= mu*(b*t0*x - b*t2*x*y - b*t3*x*z + b*x*y*z*(-x + 1) - 2*c*t2*x*z)
         return val
 
+    @cartesian
+    def dirichlet(self, p):  
+        """
+        """
+        val = self.displacement(p) 
+        return val
+        
+    def is_dirichlet_boundary(self, p):
+        eps = 1e-14
+        return (p[:,0] < eps) | (p[:,1] < eps) | (p[:,2] < eps) | (p[:, 0] > 1.0 - eps) | (p[:, 1] > 1.0 - eps) | (p[:, 2] > 1.0 - eps)
+
 class HuangModel2d():
     def __init__(self, lam=10, mu=1):
         self.lam = lam
@@ -641,6 +774,7 @@ class HuangModel2d():
         mesh.uniform_refine(n)
         return mesh 
 
+    @cartesian
     def displacement(self, p):
         x = p[..., 0]
         y = p[..., 1]
@@ -650,6 +784,7 @@ class HuangModel2d():
         val[..., 1] = -pi/2*np.sin(pi*y)**2*np.sin(2*pi*x) 
         return val
 
+    @cartesian
     def grad_displacement(self, p):
         x = p[..., 0]
         y = p[..., 1]
@@ -666,6 +801,7 @@ class HuangModel2d():
         val[..., 1, 1] = -pi**2*sin(2*pi*x)*sin(pi*y)*cos(pi*y)
         return val
 
+    @cartesian
     def stress(self, p):
         lam = self.lam
         mu = self.mu
@@ -676,6 +812,7 @@ class HuangModel2d():
         return val
         
 
+    @cartesian
     def compliance_tensor(self, phi):
         lam = self.lam
         mu = self.mu
@@ -685,9 +822,11 @@ class HuangModel2d():
         aphi /= 2*mu
         return aphi
 
+    @cartesian
     def div_stress(self, p):
         return -self.source(p)
 
+    @cartesian
     def source(self, p):
         lam = self.lam
         mu = self.mu
@@ -714,12 +853,14 @@ class HuangModel2d():
 
         return val
 
+    @cartesian
     def dirichlet(self, p):  
         """
         """
         val = self.displacement(p) 
         return val
 
+    @cartesian
     def is_dirichlet_boundary(self, p):
         eps = 1e-14
         return (p[:,0] < eps) | (p[:,1] < eps) | (p[:, 0] > 1.0 - eps) | (p[:, 1] > 1.0 - eps)
@@ -743,6 +884,7 @@ class Model2d():
         mesh.uniform_refine(n)
         return mesh 
 
+    @cartesian
     def displacement(self, p):
         x = p[..., 0]
         y = p[..., 1]
@@ -752,6 +894,7 @@ class Model2d():
         val[..., 1] = np.sin(pi*x)*np.sin(pi*y)
         return val
 
+    @cartesian
     def grad_displacement(self, p):
         x = p[..., 0]
         y = p[..., 1]
@@ -769,6 +912,7 @@ class Model2d():
         val[..., 1, 1] = pi*sin(pi*x)*cos(pi*y)
         return val
 
+    @cartesian
     def stress(self, p):
         lam = self.lam
         mu = self.mu
@@ -779,6 +923,7 @@ class Model2d():
         return val
         
 
+    @cartesian
     def compliance_tensor(self, phi):
         lam = self.lam
         mu = self.mu
@@ -788,9 +933,11 @@ class Model2d():
         aphi /= 2*mu
         return aphi
 
+    @cartesian
     def div_stress(self, p):
         return -self.source(p)
 
+    @cartesian
     def source(self, p):
         lam = self.lam
         mu = self.mu
@@ -817,3 +964,86 @@ class Model2d():
         val[..., 1] -= 2*mu*(-e*t0*x*y/2 + e*t0*x/2 - e*t0*y/2 + e*t0/2 - e*x*y*(-x + 1)/2 + e*x*y*(-y + 1)/2 + e*x*y/2 - e*x*(-y + 1)/2 - e*y*(-x + 1)/2 - pi**2*ss/2)
         return val
 
+    @cartesian
+    def dirichlet(self, p):
+        return self.displacement(p)
+
+class Hole2d():
+    def __init__(self, lam=1.0, mu=0.5):
+        self.lam = lam
+        self.mu = mu
+
+    def init_mesh(self, n=2):
+        from ..mesh import TriangleMesh
+        node = np.array([
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (0, 1)], dtype=np.float)
+        cell = np.array([(1, 2, 0), (3, 0, 2)], dtype=np.int)
+
+        mesh = TriangleMesh(node, cell)
+        mesh.uniform_refine(n)
+
+        NN = mesh.number_of_nodes()
+        node = np.zeros((NN+3, 2), dtype=np.float64)
+        node[:NN] = mesh.entity('node')
+        node[NN:] = node[[5], :]
+        cell = mesh.entity('cell')
+
+        cell[13][cell[13] == 5] = NN
+        cell[18][cell[18] == 5] = NN
+
+        cell[19][cell[19] == 5] = NN+1
+        cell[12][cell[12] == 5] = NN+1
+
+        cell[6][cell[6] == 5] = NN+2
+
+        return  TriangleMesh(node, cell)
+
+    @cartesian
+    def dirichlet(self, p):
+        val = np.zeros(p.shape, dtype=p.dtype)
+        return val
+
+    @cartesian
+    def is_dirichlet_boundary(self, p):
+        return  np.abs(p[..., 0]) < -2 + 1e-12
+
+    @cartesian
+    def neumann(self, p, n):
+        val = np.zeros_like(p)
+        val[..., 1] = -1
+        return val
+
+    @cartesian
+    def is_neumann_boundary(self, p):
+        return  np.abs(p[..., 0]) > 2 + 1e-12
+
+    @cartesian
+    def source(self, p):
+        NN = int(len(p)/2)
+        val = np.zeros_like(p)
+        val[5, 1] = 1
+        val[NN, 1] = 1
+        val[NN+1, 1] = 1
+        val[NN+2, 1] = 1
+        return val
+
+    @cartesian
+    def displacement(self, p):
+        x = p[..., 0]
+        y = p[..., 1]
+        val = np.zeros(p.shape, dtype=np.float) 
+        
+        lam = self.lam
+        mu = self.mu
+        nu = lam/(2*(lam + mu))
+        
+        P = 100
+        L = 4
+        W = 4
+        I = W**3/12
+        val[..., 0] = P*y/(6*E*I)*((6*L-3*x)*x+(2+nu)*(y**2 - W**2/4))
+        val[..., 1] = -P/(6*E*I)*(3*nu*y**2*(L-x)+(4+5*nu)*W**2*x/4+(3*L-x)*x**2)
+        return val

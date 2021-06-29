@@ -1,9 +1,11 @@
 import numpy as np
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix
 from scipy.sparse import spdiags, eye, tril, triu, bmat
+from scipy.spatial import KDTree
 from .mesh_tools import unique_row
 from .Mesh3d import Mesh3d, Mesh3dDataStructure
 from ..quadrature import TetrahedronQuadrature, TriangleQuadrature, GaussLegendreQuadrature
+from ..decorator import timer
 
 class TetrahedronMeshDataStructure(Mesh3dDataStructure):
     localFace = np.array([(1, 2, 3),  (0, 3, 2), (0, 1, 3), (0, 2, 1)])
@@ -14,19 +16,22 @@ class TetrahedronMeshDataStructure(Mesh3dDataStructure):
        (1, 2, 0, 3), (1, 0, 3, 2), (1, 3, 2, 0),
        (2, 0, 1, 3), (2, 1, 3, 0), (2, 3, 0, 1),
        (3, 0, 2, 1), (3, 2, 1, 0), (3, 1, 0, 2)]);
-    V = 4
-    E = 6
-    F = 4
-    FV = 3
-    FE = 3
+    NVC = 4
+    NEC = 6
+    NFC = 4
+    NVF = 3
+    NEF = 3
 
     def __init__(self, N, cell):
         super(TetrahedronMeshDataStructure, self).__init__(N, cell)
 
+    def number_of_vertices_of_cells(self):
+        return self.NVC
+
     def face_to_edge_sign(self):
         face2edge = self.face_to_edge()
         edge = self.edge
-        face2edgeSign = np.zeros((NF, FE), dtype=np.bool)
+        face2edgeSign = np.zeros((NF, NEF), dtype=np.bool_)
         n = [1, 2, 0]
         for i in range(3):
             face2edgeSign[:, i] = (face[:, n[i]] == edge[face2edge[:, i], 0])
@@ -36,8 +41,8 @@ class TetrahedronMeshDataStructure(Mesh3dDataStructure):
 class TetrahedronMesh(Mesh3d):
     def __init__(self, node, cell):
         self.node = node
-        N = node.shape[0]
-        self.ds = TetrahedronMeshDataStructure(N, cell)
+        NN = node.shape[0]
+        self.ds = TetrahedronMeshDataStructure(NN, cell)
 
         self.meshtype = 'tet'
 
@@ -48,38 +53,154 @@ class TetrahedronMesh(Mesh3d):
         self.edgedata = {}
         self.facedata = {}
         self.nodedata = {}
+        self.meshdata = {}
+
+        nsize = self.node.size*self.node.itemsize/2**30
+        csize = self.ds.cell.size*self.ds.cell.itemsize/2**30
+        fsize = self.ds.face.size*self.ds.face.itemsize/2**30
+        esize = self.ds.edge.size*self.ds.edge.itemsize/2**30
+        f2csize = self.ds.face2cell.size*self.ds.face2cell.itemsize/2**30
+        c2esize = self.ds.cell2edge.size*self.ds.cell2edge.itemsize/2**30 
+        total = nsize + csize + fsize + esize + f2csize + c2esize
+        print("memory size of node array (GB): ", nsize)
+        print("memory size of cell array (GB): ", csize)
+        print("memory size of face array (GB): ", fsize)
+        print("memory size of edge array (GB): ", esize)
+        print("memory size of face2cell array (GB): ", f2csize)
+        print("memory size of cell2edge array (GB): ", c2esize)
+        print("Total memory size (GB): ",  total)
+
 
     def vtk_cell_type(self):
         VTK_TETRA = 10
         return VTK_TETRA
 
     def integrator(self, k, etype=3):
-        if etype in ['cell', 3]:
+        if etype in {'cell', 3}:
             return TetrahedronQuadrature(k)
-        elif etype in ['face', 2]:
+        elif etype in {'face', 2}:
             return TriangleQuadrature(k)
-        elif etype in ['edge', 1]:
+        elif etype in {'edge', 1}:
             return GaussLegendreQuadrature(k)
 
-    def delete_cell(self, threshold):
-        NN = self.number_of_nodes()
+    def to_vtk(self, etype='cell', index=np.s_[:], fname=None):
+        """
 
-        cell = self.entity('cell')
+        Parameters
+        ----------
+        points: vtkPoints object
+        cells:  vtkCells object
+        pdata:  
+        cdata:
+
+        Notes
+        -----
+        把网格转化为 VTK 的格式
+        """
+        from .vtk_extent import vtk_cell_index, write_to_vtu
+
         node = self.entity('node')
-        bc = self.entity_barycenter('cell')
-        isKeepCell = ~threshold(bc)
-        cell = cell[isKeepCell]
+        GD = self.geo_dimension()
 
-        isValidNode = np.zeros(NN, dtype=np.bool)
-        isValidNode[cell] = True
-        node = node[isValidNode]
+        cell = self.entity(etype)[index]
+        NVC = self.ds.NVC 
+        NC = len(cell)
 
-        idxMap = np.zeros(NN, dtype=self.itype)
-        idxMap[isValidNode] = range(isValidNode.sum())
-        cell = idxMap[cell]
-        self.node = node
-        NN = len(node)
-        self.ds.reinit(NN, cell)
+        cell = np.r_['1', np.zeros((NC, 1), dtype=cell.dtype), cell]
+        cell[:, 0] = NVC
+
+        if etype == 'cell':
+            cellType = 10  # 四面体
+            celldata = self.celldata
+        elif etype == 'face':
+            cellType = 5  # 三角形
+            celldata = self.facedata
+        elif etype == 'edge':
+            cellType = 3  # segment 
+            celldata = self.edgedata
+
+        if fname is None:
+            return node, cell.flatten(), cellType, NC 
+        else:
+            print("Writting to vtk...")
+            write_to_vtu(fname, node, NC, cellType, cell.flatten(),
+                    nodedata=self.nodedata,
+                    celldata=celldata)
+
+    def is_crossed_cell(self, point, segment):
+        pass
+
+    def location(self, points):
+        """
+
+        Notes
+        ----
+
+        给定一个点, 找到这些点所在的单元
+
+        这里假设：
+
+        1. 网格中没有洞
+        2. 区域还要是凸的
+
+        """
+
+
+        NN = self.number_of_nodes()
+        NC = self.number_of_cells()
+        NP = points.shape[0]
+
+        self.celldata['cell'] = np.zeros(NC)
+
+        node = self.entity('node')
+        cell = self.entity('cell')
+        cell2cell = self.ds.cell_to_cell()
+
+        start = np.zeros(NN, dtype=self.itype)
+        start[cell[:, 0]] = range(NC)
+        start[cell[:, 1]] = range(NC)
+        start[cell[:, 2]] = range(NC)
+        start[cell[:, 3]] = range(NC)
+
+        tree = KDTree(node)
+        _, loc = tree.query(points)
+        start = start[loc] # 设置一个初始单元位置
+
+        print("start:", start)
+
+        self.celldata['cell'][start] = 1
+
+        localFace = self.ds.localFace
+        isNotOK = np.ones(NP, dtype=np.bool)
+        while np.any(isNotOK):
+            idx = start[isNotOK] # 试探的单元编号
+            pp = points[isNotOK] # 还没有找到所在单元的点的坐标
+
+            v = node[cell[idx, :]] - pp[:, None, :] # (NP, 4, 3) - (NP, 1, 3)
+            # 计算点和当前四面体四个面形成四面体的体积
+            a = np.zeros((len(idx), 4), dtype=self.ftype)
+            for i in range(4):
+                vv = np.cross(v[:, localFace[i, 0]], v[:, localFace[i, 1]])
+                a[:, i] = np.sum(vv*v[:, localFace[i, 2]], axis=-1) 
+            lidx = np.argmin(a, axis=-1) 
+
+            # 最小体积小于 0, 说明点在单元外
+            isOutCell = a[range(a.shape[0]), lidx] < 0.0 
+
+            idx0, = np.nonzero(isNotOK)
+            flag = (idx[isOutCell] == cell2cell[idx[isOutCell],
+                lidx[isOutCell]])
+
+            start[idx0[isOutCell][~flag]] = cell2cell[idx[isOutCell][~flag],
+                    lidx[isOutCell][~flag]]
+            start[idx0[isOutCell][flag]] = -1 
+
+            self.celldata['cell'][start[start > -1]] = 1
+
+            isNotOK[idx0[isOutCell][flag]] = False
+            isNotOK[idx0[~isOutCell]] = False
+
+        return start 
 
     def direction(self, i):
         """ Compute the direction on every node of
@@ -98,35 +219,34 @@ class TetrahedronMesh(Mesh3d):
 
         return l1*np.cross(v20, v30) + l2*np.cross(v30, v10) + l3*np.cross(v10, v20)
 
-    def face_normal(self):
+    def face_normal(self, index=np.s_[:]):
         face = self.ds.face
         node = self.node
-        v01 = node[face[:, 1], :] - node[face[:, 0], :]
-        v02 = node[face[:, 2], :] - node[face[:, 0], :]
+        v01 = node[face[index, 1], :] - node[face[index, 0], :]
+        v02 = node[face[index, 2], :] - node[face[index, 0], :]
         nv = np.cross(v01, v02)
-        return nv
+        return nv/2.0 # 长度为三角形面的面积
 
-    def face_unit_normal(self):
+    def face_unit_normal(self, index=np.s_[:]):
         face = self.ds.face
         node = self.node
-        v01 = node[face[:, 1], :] - node[face[:, 0], :]
-        v02 = node[face[:, 2], :] - node[face[:, 0], :]
+
+        v01 = node[face[index, 1], :] - node[face[index, 0], :]
+        v02 = node[face[index, 2], :] - node[face[index, 0], :]
         nv = np.cross(v01, v02)
         length = np.sqrt(np.square(nv).sum(axis=1))
         return nv/length.reshape(-1, 1)
 
-    def cell_volume(self, index=None):
+    def cell_volume(self, index=np.s_[:]):
         cell = self.ds.cell
         node = self.node
-        index = index if index is not None else np.s_[:]
         v01 = node[cell[index, 1]] - node[cell[index, 0]]
         v02 = node[cell[index, 2]] - node[cell[index, 0]]
         v03 = node[cell[index, 3]] - node[cell[index, 0]]
         volume = np.sum(v03*np.cross(v01, v02), axis=1)/6.0
         return volume
 
-    def face_area(self, index=None):
-        index = index if index is not None else np.s_[:]
+    def face_area(self, index=np.s_[:]):
         face = self.ds.face
         node = self.node
         v01 = node[face[index, 1], :] - node[face[index, 0], :]
@@ -135,8 +255,7 @@ class TetrahedronMesh(Mesh3d):
         area = np.sqrt(np.square(nv).sum(axis=1))/2.0
         return area
 
-    def edge_length(self, index=None):
-        index = index if index is not None else np.s_[:]
+    def edge_length(self, index=np.s_[:]):
         edge = self.ds.edge
         node = self.node
         v = node[edge[index, 1]] - node[edge[index, 0]]
@@ -157,10 +276,11 @@ class TetrahedronMesh(Mesh3d):
         return np.array(angle).T
 
 
-    def bc_to_point(self, bc, etype='cell', index=None):
-        index = index if index is not None else np.s_[:]
+    def bc_to_point(self, bc, etype='cell', index=np.s_[:]):
+
+        TD = bc.shape[-1] - 1 #
         node = self.node
-        entity = self.entity(etype)
+        entity = self.entity(etype=TD)
         p = np.einsum('...j, ijk->...ik', bc, node[entity[index]])
         return p
 
@@ -251,7 +371,7 @@ class TetrahedronMesh(Mesh3d):
             j,k,m = localFace[i]
             vjk = node[cell[:,k],:] - node[cell[:,j],:]
             vjm = node[cell[:,m],:] - node[cell[:,j],:]
-            Dlambda[:,i,:] = np.cross(vjm, vjk)/(6*volume.reshape(-1,1))
+            Dlambda[:,i,:] = np.cross(vjm, vjk)/(6*volume.reshape(-1, 1))
         return Dlambda
 
     def label(self, node=None, cell=None, cellidx=None):
@@ -284,7 +404,7 @@ class TetrahedronMesh(Mesh3d):
         length = np.sum(
                 (node[totalEdge[:, 1]] - node[totalEdge[:, 0]])**2,
                 axis = -1)
-        length += 0.1*np.random.rand(NE)*length
+        #length += 0.1*np.random.rand(NE)*length
         cellEdgeLength = length.reshape(NC, 6)
         lidx = np.argmax(cellEdgeLength, axis=-1)
 
@@ -313,7 +433,7 @@ class TetrahedronMesh(Mesh3d):
 
 
     def uniform_bisect(self, n=1):
-        for i in range(2*n):
+        for i in range(n):
             self.bisect()
 
     def bisect(self, isMarkedCell=None, data=None, returnim=False):
@@ -332,6 +452,12 @@ class TetrahedronMesh(Mesh3d):
 
         node[:NN] = self.entity('node')
         cell[:NC] = self.entity('cell')
+
+        for key in self.celldata:
+            data = np.zeros(4*NC, dtype=self.itype)
+            data[:NC] = self.celldata[key]
+            self.celldata[key] = data.copy()
+
         # 用于存储网格节点的代数，初始所有节点都为第 0 代
         generation = np.zeros(NN + 6*NC, dtype=np.uint8)
 
@@ -434,6 +560,11 @@ class TetrahedronMesh(Mesh3d):
             cell[NC:NC+nMarked, 1] = p1
             cell[NC:NC+nMarked, 2] = p3
             cell[NC:NC+nMarked, 3] = p4
+
+            for key in self.celldata:
+                data = self.celldata[key]
+                data[NC:NC+nMarked] = data[markedCell]
+
             NC = NC + nMarked
             del cellGeneration, p0, p1, p2, p3, p4
 
@@ -463,9 +594,13 @@ class TetrahedronMesh(Mesh3d):
         cell = cell[:NC]
         self.ds.reinit(NN, cell)
 
+        for key in self.celldata:
+            self.celldata[key] = self.celldata[key][:NC]
+
         if returnim is True:
             return IM
 
+    @timer
     def uniform_refine(self, n=1):
         for i in range(n):
             N = self.number_of_nodes()

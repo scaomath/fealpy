@@ -30,7 +30,7 @@ class IntervalMesh():
         self.ftype = node.dtype
 
 
-    def integrator(self, k):
+    def integrator(self, k, etype='cell'):
         return GaussLegendreQuadrature(k)
 
     def number_of_nodes(self):
@@ -54,6 +54,48 @@ class IntervalMesh():
             return self.node
         else:
             raise ValueError("`entitytype` is wrong!")
+
+    def vtk_cell_type(self):
+        VTK_LINE = 3
+        return VTK_LINE
+
+    def to_vtk(self, etype='edge', index=np.s_[:], fname=None):
+        """
+
+        Parameters
+        ----------
+        points: vtkPoints object
+        cells:  vtkCells object
+        pdata:  
+        cdata:
+
+        Notes
+        -----
+        把网格转化为 VTK 的格式
+        """
+        from .vtk_extent import vtk_cell_index, write_to_vtu
+
+        node = self.entity('node')
+        GD = self.geo_dimension()
+        if GD < 3:
+            node = np.c_[node, np.zeros((node.shape[0], 3-GD))]
+
+        cell = self.entity(etype)[index]
+        NV = cell.shape[-1]
+        NC = len(cell)
+
+        cell = np.c_[np.zeros((NC, 1), dtype=cell.dtype), cell]
+        cell[:, 0] = NV
+
+        cellType = self.vtk_cell_type()  # segment 
+
+        if fname is None:
+            return node, cell.flatten(), cellType, NC 
+        else:
+            print("Writting to vtk...")
+            write_to_vtu(fname, node, NC, cellType, cell.flatten(),
+                    nodedata=self.nodedata,
+                    celldata=self.celldata)
 
     def grad_lambda(self):
         node = self.entity('node')
@@ -106,7 +148,7 @@ class IntervalMesh():
         node = self.node if node is None else node
         cell = self.ds.cell
         index = index if index is not None else np.s_[:]
-        p = np.einsum('...j, ij->...i', bc, node[cell[index]])
+        p = np.einsum('...j, ijk->...ik', bc, node[cell[index]])
         return p
 
     def cell_normal(self, index=None, node=None):
