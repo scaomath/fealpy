@@ -1,60 +1,81 @@
 import numpy as np
-#from .HalfEdgeMesh2d import refine_halfedge
 from scipy.spatial import KDTree
 import pdb
 from scipy.spatial import Voronoi
 
 class CVTPMesher:
-    def __init__(self, mesh):
+    def __init__(self, mesh,dof = None):
         """
         Parameters
         ----------
         Mesh : mesh
         """
         self.mesh = mesh
+        if dof is not None:
+            self.dof = dof
+        else :
+            self.dof = np.ones(len(mesh.node))
 
-    def uniform_meshing(self, n=2, c=0.618, theta=100):
-        self.uniform_boundary_meshing(n=n, c=c, theta=theta)
-        self.uniform_init_interior_nodes()        
+    def uniform_meshing(self, n=2, c=0.618, theta=100,times = None):
+        self.uniform_boundary_meshing(n=n, c=c, theta=theta,times = times)
+        self.uniform_init_interior_nodes()
 
-    def uniform_refine(self,n = 2):
+    def uniform_refine(self,n = 2,times = None):
         """
         该函数用于对输入的网格边界进行加密
         n: 加密次数
         """
         mesh = self.mesh
-        for i in range(n):
-            node = mesh.node
-            halfedge = mesh.ds.halfedge
-            ndof = np.ones(len(mesh.node))
-            cstart = mesh.ds.cellstart
-            isMarkedHEdge = np.zeros(len(halfedge),dtype=np.bool_)
-            isMarkedHEdge[halfedge[:,1]<cstart] = True
-            flag = ~isMarkedHEdge & isMarkedHEdge[halfedge[:,4]]
-            ec = (node[halfedge[isMarkedHEdge,0]]+node[halfedge[flag,0]])/2
-            isMarkedHEdge[flag]=True
-            #isMarkedHEdge[halfedge[isMarkedHEdge,4]] = True
-            '''
-            flag = ~isMarkedHEdge & isMarkedHEdge[halfedge[:, 4]]
-            isMarkedHEdge[flag] = True
-            '''
-            mesh.init_level_info()
-            mesh.refine_halfedge(isMarkedHEdge)
-            self.dof = np.r_['0',
-                    ndof,np.ones_like(ec[:, 0], dtype=np.bool)]
-        if n == 0:
-            self.dof = np.ones(len(mesh.node))
+        if times is None:
+            for i in range(n):
+                node = mesh.node
+                halfedge = mesh.ds.halfedge
+                dof = self.dof
+                isMarkedHEdge = mesh.ds.main_halfedge_flag()
+                idx = halfedge[isMarkedHEdge,4]
+                ec = (node[halfedge[isMarkedHEdge,0]]+node[halfedge[idx,0]])/2
+                isMarkedHEdge[idx] = True
 
-    def uniform_boundary_meshing(self, n=0, c=0.618, theta=100):
-        self.uniform_refine(n=n)
+                mesh.init_level_info()
+                mesh.refine_halfedge(isMarkedHEdge)
+                self.dof = np.r_['0',
+                        dof,np.zeros_like(ec[:, 0], dtype=np.bool)]
+        else:
+            unique = np.unique(times)
+            for i in unique:
+                halfedge = mesh.ds.halfedge
+                l = len(halfedge)
+                isMarkedHEdge = np.zeros(l,dtype = np.bool_)
+                isMarkedHEdge[::2] = (times == i)
+                for j in range(int(i)):
+                    node = mesh.node
+                    dof = self.dof
+                    idx = halfedge[isMarkedHEdge,4]
+                    ec = (node[halfedge[isMarkedHEdge,0]]+node[halfedge[idx,0]])/2
+                    isMarkedHEdge[idx] = True
+
+                    mesh.init_level_info()
+                    mesh.refine_halfedge(isMarkedHEdge)
+                    self.dof = np.r_['0',
+                            dof,np.zeros_like(ec[:, 0], dtype=np.bool)]
+                    halfedge = mesh.ds.halfedge
+                    times = np.hstack((times,i*np.ones(int((len(halfedge)-l)/2))))
+                    l = len(halfedge)
+                    isMarkedHEdge = np.zeros(l,dtype = np.bool_)
+                    isMarkedHEdge[::2] = (times == i)
+                    print(isMarkedHEdge)
+
+    def uniform_boundary_meshing(self, n=0, c=0.618, theta=100,times=None):
+        self.uniform_refine(n=n,times = times)
         node = self.mesh.node
         NN = len(node)
         halfedge = self.mesh.entity('halfedge')
         #halfedge = self.mesh.ds.halfedge
     
         # 这里假设所有边的尺寸是一样的
-        # 进一步的算法改进中，这些尺寸应该是自适应的
+        # 进一步的算法改进中, 这些尺寸应该是自适应的
         # 顶点处的半径应该要平均一下
+
         idx0 = halfedge[halfedge[:, 3], 0]
         idx1 = halfedge[:, 0]
         v = node[idx1] - node[idx0]
@@ -66,14 +87,18 @@ class CVTPMesher:
         np.add.at(n, idx0, 1)
         np.add.at(n, idx1, 1)
         r /= n
-        r *= c
+        r *= c # 半径
         w = np.array([[0, 1], [-1, 0]])
 
-        # 修正角点相邻点的半径， 如果角点的角度小于 theta 的
-        # 这里假设角点相邻的节点， 到角点的距离相等
+        # 修正角点相邻点的半径, 如果角点的角度小于 theta 的
+        # 这里假设角点相邻的节点, 到角点的距离相等
         isFixed = self.dof
-        #idx, = np.nonzero(isFixed)
-        idx, = np.where(isFixed==0)
+        hnode = np.zeros(NN,dtype = np.int_)
+        hnode[halfedge[:,0]] = np.arange(len(halfedge))
+        hnode1 = halfedge[halfedge[hnode,2],4]
+
+        idx, = np.where(isFixed==1)
+        idx = np.hstack((hnode[idx],hnode1[idx]))
         pre = halfedge[idx, 3]
         nex = halfedge[idx, 2]
 
@@ -90,14 +115,19 @@ class CVTPMesher:
         a = np.arcsin(s)
         a[s < 0] += 2*np.pi
         a[c == -1] = np.pi
+        aflag1 = ((c<0) & (a>np.pi))
+        a[aflag1] = 3*np.pi - a[aflag1]
+        aflag2 = ((c<0) & (a<(np.pi/2)))
+        a[aflag2] = np.pi - a[aflag2]
         a = np.degrees(a)
+        print(a)
         isCorner = a < theta
+         
         idx = idx[isCorner] # 需要特殊处理的半边编号 
-
 
         v2 = (v0[isCorner] + v1[isCorner])/2
         v2 /= np.sqrt(np.sum(v2**2, axis=-1, keepdims=True))
-        v2 *= r[halfedge[idx, 0], None] 
+        v2 *= r[halfedge[idx, 0], None]
         p = node[halfedge[idx, 0]] + v2
         r[halfedge[pre[isCorner], 0]] = np.sqrt(np.sum((p - p0[isCorner])**2, axis=-1))
         r[halfedge[nex[isCorner], 0]] = np.sqrt(np.sum((p - p2[isCorner])**2, axis=-1))
@@ -108,14 +138,14 @@ class CVTPMesher:
         index = np.arange(NG)
         nex = halfedge[idx, 2]
         index[nex] = idx
-        
+
         # 计算每个半边对应的节点
         center = (node[idx0] + node[idx1])/2
         r0 = r[idx0]
         r1 = r[idx1]
         c0 = 0.5*(r0**2 - r1**2)/h**2
         c1 = 0.5*np.sqrt(2*(r0**2 + r1**2)/h**2 - (r0**2 - r1**2)**2/h**4 - 1)
-        bnode = center + c0.reshape(-1, 1)*v + c1.reshape(-1, 1)*(v@w) 
+        bnode = center + c0.reshape(-1, 1)*v + c1.reshape(-1, 1)*(v@w)
 
         isKeepNode = np.zeros(NG, dtype=np.bool)
         isKeepNode[index] = True
@@ -127,16 +157,18 @@ class CVTPMesher:
         self.cnode = node[halfedge[idx[idxflag], 0]] - v2[idxflag] #
         self.hedge2bnode = idxmap[index] # hedge2bnode[i]: the index of node in bnode
         self.chedge = idx # the index of halfedge point on corner point
+        print(halfedge)
 
     def uniform_init_interior_nodes(self):
-        
+        mesh = self.mesh
         node = self.mesh.node
         halfedge = self.mesh.entity('halfedge')
 
-        NB = len(self.bnode)
-        NC = len(self.cnode)
-
-        bnode2subdomain = np.zeros(NB+NC, dtype=np.int)
+        NNB = len(self.bnode)
+        NNC = len(self.cnode)
+        hcell = len(mesh.ds.hcell)# hcell[i] 是第i个单元其中一条边的索引
+        cstart = mesh.ds.cellstart
+        bnode2subdomain = np.zeros(NNB+NNC, dtype=np.int)
         bnode2subdomain[self.hedge2bnode] = halfedge[:, 1]
 
         idx0 = halfedge[halfedge[:, 3], 0]
@@ -144,11 +176,12 @@ class CVTPMesher:
         v = node[idx1] - node[idx0]
         h = np.sqrt(np.sum(v**2, axis=-1))
 
-        if NC > 0:
+        if NNC > 0:
             bd = np.r_[self.bnode, self.cnode]
         else:
             bd = self.bnode
         tree = KDTree(bd)
+        #c = 6*np.sqrt(3*(h[0]/2)*(h(0)/2)**3)
         c = 6*np.sqrt(3*(h[0]/2)*(h[0]/4)**3/2)
         self.inode = {} # 用一个字典来存储每个子区域的内部点
         for index in filter(lambda x: x > 0, self.mesh.ds.subdomain):
@@ -158,9 +191,12 @@ class CVTPMesher:
             ymin = min(p[:, 1])
             ymax = max(p[:, 1])
             
-            area = self.mesh.cell_area(index)
+            area = self.mesh.cell_area(index)[index-1]
             N = int(area/c)
             N0 = p.shape[0]
+            while N-N0 <= 0:
+                c = 0.9*c
+                N = int(area/c)
             start = 0
             newNode = np.zeros((N - N0, 2), dtype=node.dtype)
             NN = newNode.shape[0]
@@ -185,16 +221,16 @@ class CVTPMesher:
         cnode = self.cnode
         inode = self.inode
        
-        NB = len(bnode) 
-        NC = len(cnode)
-        NN = NB + NC
+        NNB = len(bnode) 
+        NNC = len(cnode)
+        NN = NNB + NNC
         for index, point in inode.items(): # inode is a dict
             NN += len(point)
         self.NN = NN
         points = np.zeros((NN, 2), dtype=bnode.dtype)
-        points[:NB] = bnode
-        points[NB:NB+NC] = cnode
-        start = NB + NC
+        points[:NNB] = bnode
+        points[NNB:NNB+NNC] = cnode
+        start = NNB + NNC
         for index, point in inode.items():
             N = len(point)
             points[start:start+N] = point
@@ -202,7 +238,7 @@ class CVTPMesher:
 
         # construct voronoi diagram
         vor = Voronoi(points)
-        start = NB+NC
+        start = NNB+NNC
 
         return vor, start
 
