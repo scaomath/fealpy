@@ -1,12 +1,14 @@
 import numpy as np
 import meshio
 
-from fealpy.decorator import cartesian, barycentric
+from fealpy.decorator import cartesian, barycentric, timer
+from fealpy.geometry.implicit_surface import ScaledSurface, SphereSurface
 from fealpy.mesh import LagrangeTriangleMesh, LagrangeWedgeMesh
 from fealpy.writer import MeshWriter
 
 class TPMModel():
-    def __init__(self, options=None):
+    def __init__(self, args, options=None):
+        self.args = args
         if options is None:
             self.options = self.model_options()
 
@@ -54,78 +56,114 @@ class TPMModel():
         return options
 
 
-    def init_mesh(self, n=0, h=0.005, nh=100, H=500, p=1):
+    @timer
+    def init_rotation_mesh(self):
+        print("Generate the init mesh!...")
+
+        args = self.args
+        n = args.nrefine # 初始网格加密次数
+        p = args.degree # 空间次数 
+        h = args.h # 求解区域的厚度
+        nh = args.nh # 三棱柱层数
+        H = args.scale # 小行星规模
+
         fname = 'initial/file1.vtu'
         data = meshio.read(fname)
         node = data.points # 无量纲数值
         cell = data.cells[0][1]
+        print("number of nodes of surface mesh:", len(node))
+        print("number of cells of surface mesh:", len(cell))
 
         node = node - np.mean(node, axis=0) # 以质心作为原点
         l = self.options['l']
-        node*= H # H 小行星的规模
-        node/=l # 无量纲化处理
-        h/= l # 无量纲化处理
+        node *= H # H 小行星的规模
+        node /=l # 无量纲化处理
+
+        h /=nh # 单个三棱柱的高度
+        h /= l # 无量纲化处理
 
         mesh = LagrangeTriangleMesh(node, cell, p=p)
         mesh.uniform_refine(n)
         mesh = LagrangeWedgeMesh(mesh, h, nh, p=p)
 
-        self.mesh = mesh
-        self.p = p
+        print("finish mesh generation!")
         return mesh
-
-    def init_mu(self, t, n0):
-        boundary_face_index = self.is_robin_boundary()
-        qf0, qf1 = self.mesh.integrator(self.p, 'face')
-        bcs, ws = qf0.get_quadrature_points_and_weights()
-        m = self.mesh.boundary_tri_face_unit_normal(bcs, index=boundary_face_index)
-
-        # 指向太阳的向量绕 z 轴旋转, 这里 t 为 omega*t
-        Z = np.array([[np.cos(-t), -np.sin(-t), 0],
-            [np.sin(-t), np.cos(-t), 0],
-            [0, 0, 1]], dtype=np.float64)
-        n = Z@n0 # t 时刻指向太阳的方向
-        n = n/np.sqrt(np.dot(n, n)) # 单位化处理
-
-        mu = np.dot(m, n)
-        mu[mu<0] = 0
-        return mu
     
-    def right_vector(self, uh):
-        shape = uh.shape[0]
-        f = np.zeros(shape, dtype=np.float)
-        return f 
+    @timer
+    def test_mesh(self):
+        print("Generate the init mesh!...")
+        
+        args = self.args
+        n = args.nrefine # 初始网格加密次数
+        p = args.degree # 空间次数 
+        h = args.h # 求解区域的厚度
+        nh = args.nh # 三棱柱层数
+        H = args.scale # 小行星规模
+
+        surface = SphereSurface()
+        node, cell = surface.init_mesh(meshtype='tri', returnnc=True, p=p)
+        
+        node *= H # H 小行星的规模
+
+        h /=nh # 单个三棱柱的高度
+
+        surface = ScaledSurface(surface, H)
+
+        mesh = LagrangeTriangleMesh(node, cell, p=p, surface=surface)
+        mesh.uniform_refine(n)
+        
+        node = mesh.entity('node')
+        cell = mesh.entity('cell')
+        print('node:', len(node))
+        print('cell:', len(cell))
+        
+        mesh = LagrangeWedgeMesh(mesh, h, nh, p=p)
+        
+        node = mesh.entity('node')
+        cell = mesh.entity('cell')
+        print('node:', len(node))
+        print('cell:', len(cell))
+        
+        print("finish mesh generation!")
+        return mesh
     
-    @cartesian
-    def neumann(self, p, n):
-        gN = np.zeros((p.shape[0], p.shape[1]), dtype=np.float)
-        return gN
+    @timer
+    def test_rotation_mesh(self):
+        print("Generate the init mesh!...")
 
-    @cartesian
-    def neumann_boundary_index(self):
-        tface, qface = self.mesh.entity('face')
-        NTF = len(tface)
-        index = np.zeros(NTF, dtype=np.bool_)
-        index[-NTF//2:] = True
-        return boundary_neumann_tface_index 
+        args = self.args
+        n = args.nrefine # 初始网格加密次数
+        p = args.degree # 空间次数 
+        h = args.h # 求解区域的厚度
+        nh = args.nh # 三棱柱层数
+        H = args.scale # 小行星规模
 
-    @cartesian    
-    def robin(self, p, n, t):
-        """ Robin boundary condition
-        """
-        Phi = self.options['Phi']
-        sd = self.options['sd']
-        mu = self.init_mu(t, sd)
-       
-        shape = len(mu.shape)*(1, )
-        k = -np.array([1.0], dtype=np.float64).reshape(shape)/Phi
-        return -mu/Phi, k
-    
-    @cartesian
-    def robin_boundary_index(self):
-        tface, qface = self.mesh.entity('face')
-        NTF = len(tface)
-        index = np.zeros(NTF, dtype=np.bool_)
-        index[:NTF//2] = True
-        return index 
+        surface = SphereSurface()
+        node, cell = surface.init_mesh(meshtype='tri', returnnc=True, p=p)
+        
+        l = self.options['l']
+        node *= H # H 小行星的规模
+        node /=l # 无量纲化处理
 
+        h /=nh # 单个三棱柱的高度
+        h /= l # 无量纲化处理
+
+        surface = ScaledSurface(surface, H)
+
+        mesh = LagrangeTriangleMesh(node, cell, p=p, surface=surface)
+        mesh.uniform_refine(n)
+        
+        node = mesh.entity('node')
+        cell = mesh.entity('cell')
+        print('node:', len(node))
+        print('cell:', len(cell))
+        
+        mesh = LagrangeWedgeMesh(mesh, h, nh, p=p)
+        
+        node = mesh.entity('node')
+        cell = mesh.entity('cell')
+        print('node:', len(node))
+        print('cell:', len(cell))
+
+        print("finish mesh generation!")
+        return mesh
