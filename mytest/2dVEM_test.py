@@ -1,10 +1,7 @@
-#!/usr/bin/env python3
-#
-
 import numpy as np
 
 from fealpy.pde.poisson_model_2d import CrackData, LShapeRSinData, CosCosData, KelloggData, SinSinData
-from fealpy.vem import PoissonCVEMModel 
+from fealpy.vem import PoissonVEMModel 
 from fealpy.tools.show import showmultirate
 from fealpy.mesh.simple_mesh_generator import triangle
 from fealpy.mesh import Quadtree
@@ -48,10 +45,11 @@ errorType = ['$|| u - \Pi^\\nabla u_h||_0$ with p=1',
 ps = [1, 2, 5]
 
 errorMatrix = np.zeros((len(errorType), maxit), dtype=np.float)
+integrator = mesh.integrator(7)
 
 for i in range(maxit):
     for j, p in enumerate(ps):
-        vem = PoissonCVEMModel(pde, mesh, p, q=7)
+        vem = PoissonVEMModel(pde, mesh, p, integrator)
         vem.solve()
         Ndof[i] = mesh.number_of_cells()
         errorMatrix[j, i] = vem.L2_error()

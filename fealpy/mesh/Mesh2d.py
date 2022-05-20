@@ -162,7 +162,6 @@ class Mesh2d(object):
             showaxis=False, showcolorbar=False, 
             cmax=None, cmin=None, 
             colorbarshrink=1.0, cmap='jet', box=None):
-
         if isinstance(plot, ModuleType):
             fig = plot.figure()
             fig.set_facecolor('white')

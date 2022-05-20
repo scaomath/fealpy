@@ -32,6 +32,8 @@ class HexahedronMeshDataStructure(Mesh3dDataStructure):
     def face_to_edge_sign(self):
         face2edge = self.face_to_edge()
         edge = self.edge
+        face = self.face
+        NF = self.NF
         face2edgeSign = np.zeros((NF, 4), dtype=np.bool)
         for i in range(4):
             face2edgeSign[:, i] = (face[:, i] == edge[face2edge[:, i], 0])

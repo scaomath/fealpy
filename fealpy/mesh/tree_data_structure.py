@@ -365,7 +365,7 @@ class Octree(HexahedronMesh):
         (4, 5), (5, 6), (6, 7), (7, 4)], dtype=np.int)
 
     def __init__(self, node, cell, dtype=np.float):
-        super(Octree, self).__init__(node, cell, dtype=dtype)
+        super(Octree, self).__init__(node, cell)
         self.dtype = dtype
         NC = self.number_of_cells()
         self.parent = -np.ones((NC, 2), dtype=np.int) 
